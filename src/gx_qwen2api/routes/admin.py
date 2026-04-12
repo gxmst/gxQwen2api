@@ -7,13 +7,14 @@ import html
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse
 
-from ..account_pool import AccountPool
+from ..account_pool import AccountPool, AccountState
 from ..auth import AuthManager
 from ..auto_refresher import AutoRefresher
 from ..config import settings
@@ -24,21 +25,25 @@ router = APIRouter(prefix="/admin")
 COOKIE_NAME = "qwen_admin"
 
 
+def get_admin_user(request: Request) -> None:
+    """Dependency for checking admin credentials."""
+    if not settings.admin_enabled:
+        raise HTTPException(status_code=404, detail="Admin disabled")
+    
+    expected = _admin_cookie_hash()
+    if expected is None:
+        return  # No password configured → open access
+        
+    actual = request.cookies.get(COOKIE_NAME)
+    if not actual or actual != expected:
+        raise HTTPException(status_code=403, detail="Forbidden — login required")
+
+
 def _admin_cookie_hash() -> str | None:
     """Return the expected cookie value, or None when no password is set."""
     if not settings.admin_password:
         return None
     return hashlib.sha256(settings.admin_password.encode()).hexdigest()
-
-
-def _check_admin(request: Request) -> None:
-    """Raise 403 when ADMIN_PASSWORD is set and the cookie is missing / wrong."""
-    expected = _admin_cookie_hash()
-    if expected is None:
-        return  # No password configured → open access
-    actual = request.cookies.get(COOKIE_NAME)
-    if not actual or actual != expected:
-        raise HTTPException(status_code=403, detail="Forbidden — login required")
 
 
 def _set_admin_cookie(response: Response) -> None:
@@ -110,10 +115,7 @@ async def do_logout() -> Response:
 
 
 @router.get("/", response_class=HTMLResponse)
-async def admin_page(request: Request) -> HTMLResponse:
-    _check_admin(request)
-    if not settings.admin_enabled:
-        raise HTTPException(status_code=404, detail="Admin disabled")
+async def admin_page(request: Request, _=Depends(get_admin_user)) -> HTMLResponse:
     tpl = Path(__file__).resolve().parent.parent / "static" / "admin.html"
     html_content = tpl.read_text(encoding="utf-8")
     # Inject whether admin password is set so the frontend can show logout UI
@@ -129,37 +131,32 @@ async def admin_page(request: Request) -> HTMLResponse:
 # ── API endpoints ────────────────────────────────────────────────
 
 @router.get("/api/accounts")
-async def api_accounts(request: Request) -> list[dict[str, Any]]:
-    _check_admin(request)
+async def api_accounts(request: Request, _=Depends(get_admin_user)) -> list[dict[str, Any]]:
     pool: AccountPool = request.app.state.pool
     return [a.to_dict() for a in pool.all_accounts()]
 
 
 @router.get("/api/logs")
-async def api_logs(request: Request, limit: int = 100) -> list[dict[str, Any]]:
-    _check_admin(request)
+async def api_logs(request: Request, limit: int = 100, _=Depends(get_admin_user)) -> list[dict[str, Any]]:
     return event_logger.get_logs(limit=limit)
 
 
 @router.post("/api/scan")
-async def api_scan(request: Request) -> dict[str, str]:
-    _check_admin(request)
+async def api_scan(request: Request, _=Depends(get_admin_user)) -> dict[str, str]:
     pool: AccountPool = request.app.state.pool
     pool.scan()
     return {"status": "ok", "detail": f"Found {len(pool.accounts)} accounts"}
 
 
 @router.post("/api/reload")
-async def api_reload(request: Request, account_id: str) -> dict[str, Any]:
-    _check_admin(request)
+async def api_reload(request: Request, account_id: str, _=Depends(get_admin_user)) -> dict[str, Any]:
     pool: AccountPool = request.app.state.pool
     ok = pool.reload_account(account_id)
     return {"status": "ok" if ok else "not_found", "account_id": account_id}
 
 
 @router.post("/api/reload-all")
-async def api_reload_all(request: Request) -> dict[str, str]:
-    _check_admin(request)
+async def api_reload_all(request: Request, _=Depends(get_admin_user)) -> dict[str, str]:
     pool: AccountPool = request.app.state.pool
     count = 0
     for acct in pool.all_accounts():
@@ -169,8 +166,7 @@ async def api_reload_all(request: Request) -> dict[str, str]:
 
 
 @router.post("/api/refresh/{account_id}")
-async def api_refresh(request: Request, account_id: str) -> dict[str, Any]:
-    _check_admin(request)
+async def api_refresh(request: Request, account_id: str, _=Depends(get_admin_user)) -> dict[str, Any]:
     pool: AccountPool = request.app.state.pool
     auth: AuthManager = request.app.state.auth
     client = request.app.state.http_client
@@ -185,25 +181,22 @@ async def api_refresh(request: Request, account_id: str) -> dict[str, Any]:
 
 
 @router.post("/api/enable/{account_id}")
-async def api_enable(request: Request, account_id: str) -> dict[str, Any]:
-    _check_admin(request)
+async def api_enable(request: Request, account_id: str, _=Depends(get_admin_user)) -> dict[str, Any]:
     pool: AccountPool = request.app.state.pool
     ok = pool.enable_account(account_id)
     return {"status": "ok" if ok else "not_found", "account_id": account_id}
 
 
 @router.post("/api/disable/{account_id}")
-async def api_disable(request: Request, account_id: str) -> dict[str, Any]:
-    _check_admin(request)
+async def api_disable(request: Request, account_id: str, _=Depends(get_admin_user)) -> dict[str, Any]:
     pool: AccountPool = request.app.state.pool
     ok = pool.disable_account(account_id)
     return {"status": "ok" if ok else "not_found", "account_id": account_id}
 
 
 @router.post("/api/verify/{account_id}")
-async def api_verify(request: Request, account_id: str) -> dict[str, Any]:
+async def api_verify(request: Request, account_id: str, _=Depends(get_admin_user)) -> dict[str, Any]:
     """Verify if an account's token is actually valid by checking with the API."""
-    _check_admin(request)
     pool: AccountPool = request.app.state.pool
     auth: AuthManager = request.app.state.auth
     client = request.app.state.http_client
@@ -222,7 +215,6 @@ async def api_verify(request: Request, account_id: str) -> dict[str, Any]:
         }
 
     # Try a simple API call to verify
-    import time
     try:
         test_resp = await client.get(
             f"{auth.get_api_endpoint(acct)}/models",
@@ -291,8 +283,7 @@ async def api_verify(request: Request, account_id: str) -> dict[str, Any]:
 
 
 @router.post("/api/logs/clear")
-async def api_clear_logs(request: Request) -> dict[str, str]:
-    _check_admin(request)
+async def api_clear_logs(request: Request, _=Depends(get_admin_user)) -> dict[str, str]:
     event_logger.clear_logs()
     return {"status": "ok"}
 
@@ -300,8 +291,7 @@ async def api_clear_logs(request: Request) -> dict[str, str]:
 # ── Auto-refresh ────────────────────────────────────────────
 
 @router.get("/api/auto-refresh/status")
-async def api_auto_refresh_status(request: Request) -> dict[str, Any]:
-    _check_admin(request)
+async def api_auto_refresh_status(request: Request, _=Depends(get_admin_user)) -> dict[str, Any]:
     refresher: AutoRefresher = request.app.state.auto_refresher
     return {
         "config": refresher.get_config(),
@@ -309,9 +299,8 @@ async def api_auto_refresh_status(request: Request) -> dict[str, Any]:
 
 
 @router.post("/api/auto-refresh/run")
-async def api_auto_refresh_run(request: Request) -> dict[str, str]:
+async def api_auto_refresh_run(request: Request, _=Depends(get_admin_user)) -> dict[str, str]:
     """Trigger a manual auto-refresh cycle."""
-    _check_admin(request)
     refresher: AutoRefresher = request.app.state.auto_refresher
     result = await refresher.run_once()
     return {"status": "ok", "detail": result}
@@ -327,8 +316,7 @@ _FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.json$")
 
 
 @router.post("/api/upload")
-async def api_upload(request: Request, file: UploadFile) -> dict[str, Any]:
-    _check_admin(request)
+async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_user)) -> dict[str, Any]:
     """Validate + save uploaded credential JSON file."""
     # 1. Check filename
     name = file.filename or ""
@@ -370,7 +358,6 @@ async def api_upload(request: Request, file: UploadFile) -> dict[str, Any]:
     data.setdefault("token_type", "Bearer")
     data.setdefault("resource_url", "https://portal.qwen.ai/v1")
     if not data.get("expiry_date"):
-        import time
         data["expiry_date"] = int(time.time() * 1000) + 7 * 24 * 3600 * 1000  # 7 days
 
     # 6. Try to save to creds_dir — gracefully handle permission errors
@@ -402,11 +389,8 @@ async def api_upload(request: Request, file: UploadFile) -> dict[str, Any]:
         state = pool._try_load_account(account_id, target)
     else:
         # Create an in-memory account from the uploaded data
-        from pathlib import Path as _Path
-        import hashlib
         rt = data.get("refresh_token", "")
         rt_hash = hashlib.sha256(rt.encode()).hexdigest()[:8] if rt else ""
-        from ..account_pool import AccountState
         state = AccountState(
             account_id=account_id,
             creds_file=target,
@@ -414,6 +398,8 @@ async def api_upload(request: Request, file: UploadFile) -> dict[str, Any]:
             access_token=data.get("access_token", ""),
             expiry_date=data.get("expiry_date", 0),
             refresh_token_hash=rt_hash,
+            last_write_persisted=False,
+            last_write_error="Permission denied or write failed during upload",
             _raw_creds=data,
         )
         state.update_health()

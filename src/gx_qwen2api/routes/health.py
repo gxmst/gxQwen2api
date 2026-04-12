@@ -24,11 +24,13 @@ async def health(request: Request) -> dict[str, Any]:
         if a.enabled and a.health_status.value in ("valid", "expiring_soon")
     )
     total = len(accounts)
-
+    persistence_warnings = sum(1 for a in accounts if not a.last_write_persisted)
+    
     return {
         "status": "ok",
         "accounts_total": total,
         "accounts_healthy": healthy,
+        "persistence_warnings": persistence_warnings,
         "total_requests": request.app.state.request_count,
         "uptime_seconds": round(time.time() - request.app.state.start_time, 1),
     }

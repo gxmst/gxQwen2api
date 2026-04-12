@@ -1,6 +1,7 @@
 """Qwen model definitions, aliases, and token limits."""
 
 from typing import Any
+from .config import settings
 
 
 MODEL_ALIASES: dict[str, str] = {
@@ -10,8 +11,12 @@ MODEL_ALIASES: dict[str, str] = {
 
 
 def is_auth_error(status: int | None, message: str) -> bool:
-    """Check if error is authentication-related (400/401/403/504 or auth message)."""
-    if status in (400, 401, 403, 504):
+    """Check if error is authentication-related (401/403 or specific auth message).
+    
+    We specifically exclude 400 and 504 from the status-only list as they are
+    often validation or network issues, not auth issues.
+    """
+    if status in (401, 403):
         return True
     msg_lower = message.lower()
     return any(
@@ -92,7 +97,6 @@ def resolve_thinking_params(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def resolve_model(model: str) -> str:
-    from .config import settings
     return MODEL_ALIASES.get(model, model) or settings.default_model
 
 

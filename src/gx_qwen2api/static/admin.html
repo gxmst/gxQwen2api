@@ -40,6 +40,7 @@ a { color: var(--accent); }
 .badge-info { background: #1f6feb22; color: var(--accent); border: 1px solid #1f6feb66; }
 .badge-disabled { background: #484f5822; color: var(--muted); border: 1px solid #484f5866; }
 .badge-cooldown { background: #db6d2822; color: var(--orange); border: 1px solid #db6d2866; }
+.badge-warning { background: #d2992222; color: var(--yellow); border: 1px solid #d29922aa; }
 
 /* Account cards */
 .accounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
@@ -302,6 +303,8 @@ const i18n = {
     ts_last_check: '最近校验',
     ts_last_success: '校验成功',
     ts_last_failure: '校验失败',
+    meta_persistence: '持久化状态',
+    warning_not_persisted: '⚠️ 仅内存（写入磁盘失败，重启将丢失）',
     btn_enable: '✅ 启用',
     btn_disable: '⛔ 禁用',
     btn_force_refresh: '🔄 强制刷新',
@@ -414,6 +417,8 @@ const i18n = {
     ts_last_check: 'Last Check',
     ts_last_success: 'Last Success',
     ts_last_failure: 'Last Failure',
+    meta_persistence: 'Persistence',
+    warning_not_persisted: '⚠️ Memory Only (Write failed, will lose on restart)',
     btn_enable: '✅ Enable',
     btn_disable: '⛔ Disable',
     btn_force_refresh: '🔄 Force Refresh',
@@ -582,6 +587,11 @@ function cardStatusClass(status) {
   return '';
 }
 
+function persistenceBadge(persisted, error) {
+  if (persisted) return '';
+  return `<span class="badge badge-warning" title="${escAttr(error || '')}">${t('warning_not_persisted')}</span>`;
+}
+
 function renderStatusReason(key, params) {
   if (!key) return '';
   params = params || {};
@@ -711,6 +721,7 @@ function renderAccounts(accounts, health) {
           <span>
             ${a.enabled ? '<span class="badge badge-valid">' + t('enabled') + '</span>' : '<span class="badge badge-disabled">' + t('disabled') + '</span>'}
             ${a.in_cooldown ? `<span class="badge badge-cooldown" id="${cooldownId}">⏱️ <span class="cooldown-timer" data-until="${Math.ceil(a.cooldown_until)}"></span></span>` : ''}
+            ${persistenceBadge(a.last_write_persisted, a.last_write_error)}
           </span>
         </h3>
         <div class="meta">

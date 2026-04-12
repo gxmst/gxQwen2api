@@ -27,10 +27,15 @@ qwen login
 
 ### Docker
 
-```bash
 cp .env.example .env.secret
 docker compose --env-file .env.secret up -d
 ```
+
+> [!IMPORTANT]
+> **版本升级注意**：如果你是从旧版（使用 `~/.qwen` 挂载）升级，默认会看到空列表。请参考[旧版迁移指南](#旧版迁移至-named-volume)。
+
+> [!TIP]
+> 默认使用 Docker 命名卷 `qwen_creds` 进行持久化，这是最稳定且不影响宿主机的方案。
 
 ### 本地开发
 
@@ -181,35 +186,58 @@ uv run python -m gx_qwen2api.main
 
 ## Token 持久化策略
 
-### 默认行为
+> [!CAUTION]
+> **重要安全性警告**：如果凭证无法持久化（写入磁盘失败），系统将进入 **"仅内存 (Memory Only)"** 模式。
+> 这意味着在容器重启或服务更新后，所有已生成的 Access Token 和新上传的凭证都会**丢失**，导致服务回退到旧状态甚至不可用。
 
-当服务刷新 token 后，会**尝试**将更新后的凭证写回磁盘（覆盖原 `*.json` 文件）。
-这确保重启后 token 不会丢失。
+### 推荐方案：Docker 命名卷 (Named Volume) [最省心]
 
-### Docker 挂载目录权限问题
+在 `docker-compose.yml` 中默认启用。Docker 会自动处理文件权限，确保容器内 `nonroot` 用户可以读写。
+- **优点**：环境隔离、权限自动处理、升级不丢失（只要卷不删）。
+- **缺点**：宿主机无法直接通过文件路径修改凭证。
 
-如果 `CREDS_DIR` 是通过 Docker bind mount 挂载的宿主机目录，容器内的 `nonroot` 用户
-可能没有写入权限。此时：
+### 备选方案：管理面板上传 [零配置]
 
-- **服务不会崩溃** — 写入失败时仅记录 warning 日志
-- **Token 在内存中正常更新** — 请求不受影响
-- **不会修改宿主机文件所有权** — 容器启动时不再递归 `chown` 挂载目录
-- **重启后需重新刷新** — 未持久化的 token 在容器重启后失效，需要重新 refresh
+继续使用 `Named Volume`，在宿主机执行 `qwen login` 后，直接打开浏览器访问 `/admin/` 页面，将生成的 `~/.qwen/oauth_creds.json` 拖入上传即可。
+- **这是最推荐的“混合使用”方案**，既能利用宿主机的登录工具，又能享受容器内的持久化。
 
-**建议**：如果需要持久化，确保挂载目录对容器用户可写：
+### 进阶方案：宿主机挂载 (Bind Mount) [有风险]
 
-```bash
-# 方法 1：在宿主机上提前设置权限
-chmod 777 ~/.qwen
+如果你一定要直接挂载宿主机目录：
 
-# 方法 2：使用 Docker volume 而非 bind mount
-docker volume create qwen_creds
+```yaml
+# docker-compose.yml
+services:
+  gx-qwen-api:
+    volumes:
+      - ~/.qwen:/app/data/creds
 ```
 
-### 管理面板上传凭证
+> [!WARNING]
+> **权限警告**：由于容器运行在 `nonroot` (UID 999) 用户下，如果宿主机目录不可写，Token 将无法持久化。
+> 1. **不推荐** 使用 `chown -R 999:999 ~/.qwen`，因为这会破坏宿主机工具（如 `qwen login`）的权限。
+> 2. **注意**：如果你将目录挂载为只读（`:ro`），则管理面板的所有更新（刷新 Token、上传凭证）都**无法写回磁盘**，仅在内存中生效。
 
-通过管理面板上传的凭证文件也会写入 `CREDS_DIR`。同样受上述权限规则约束。
-上传后账号会立即在内存中注册，即使写入磁盘失败也不影响当前使用。
+## 旧版迁移至 Named Volume
+
+如果你之前使用的是 `~/.qwen` 挂载，只需执行以下指令将数据一键搬入新卷：
+
+```bash
+# 1. 确保容器已启动
+docker compose up -d
+
+# 2. 将宿主机 ~/.qwen 下的所有 JSON 拷贝进容器内的卷路径
+# 这会自动处理权限，且通过 Compose 明确指定服务，不会误伤其他项目
+docker compose cp ~/.qwen/. gx-qwen-api:/app/data/creds
+
+# 3. 在管理面板点击 "Scan Creds Dir" 即可看到新账号
+```
+
+### 监控持久化状态
+
+- **管理面板**：如果写入失败，账号卡片上会显示黄色感叹号 `⚠️ 仅内存`。
+- **健康检查**：`/health` 接口会包含 `persistence_warnings` 计数。
+- **日志**：Stderr 会记录 `Cannot write ... — permission denied` 的详细错误。
 
 ## 架构
 

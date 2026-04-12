@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
+import hashlib
 import json
 import time
 from typing import Any
@@ -20,8 +22,12 @@ class AuthManager:
 
     def __init__(self, pool: AccountPool) -> None:
         self.pool = pool
-        self._refresh_locks: dict[str, bool] = {}
-        self._refresh_events: dict[str, asyncio.Event] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _get_lock(self, account_id: str) -> asyncio.Lock:
+        if account_id not in self._locks:
+            self._locks[account_id] = asyncio.Lock()
+        return self._locks[account_id]
 
     async def refresh_token(
         self, acct: AccountState, client: httpx.AsyncClient
@@ -127,7 +133,6 @@ class AuthManager:
         # Update account state
         new_expiry = int(time.time() * 1000) + int(token_data.get("expires_in", 0)) * 1000
         new_rt = token_data.get("refresh_token", raw.get("refresh_token", ""))
-        import hashlib
         acct.access_token = token_data["access_token"]
         acct.expiry_date = new_expiry
         acct.refresh_token_hash = (
@@ -144,7 +149,6 @@ class AuthManager:
         raw["resource_url"] = token_data.get("resource_url", raw.get("resource_url", ""))
         self.pool.save_creds(acct.account_id, raw)
 
-        import datetime
         dt = datetime.datetime.fromtimestamp(
             new_expiry / 1000, tz=datetime.timezone.utc
         )
@@ -162,35 +166,18 @@ class AuthManager:
         self, acct: AccountState, client: httpx.AsyncClient
     ) -> bool:
         """Refresh with per-account concurrency coordination.
-
+ 
         If another coroutine is already refreshing this account, wait for it
         instead of starting a duplicate refresh. Returns True on success.
         """
         aid = acct.account_id
-        if aid not in self._refresh_events:
-            self._refresh_events[aid] = asyncio.Event()
-            self._refresh_events[aid].clear()
-
-        if not self._refresh_locks.get(aid):
-            # We are the first — do the refresh
-            self._refresh_locks[aid] = True
-            try:
-                ok = await self.refresh_token(acct, client)
-                return ok
-            finally:
-                self._refresh_locks[aid] = False
-                self._refresh_events[aid].set()
-                # Clear the event so the next refresh cycle is clean
-                self._refresh_events.pop(aid, None)
-        else:
-            # Another coroutine is refreshing — wait for it
-            try:
-                await asyncio.wait_for(self._refresh_events[aid].wait(), timeout=30)
-            except TimeoutError:
-                pass
-            # Re-read state after wait
+        async with self._get_lock(aid):
+            # Re-read state in case another coroutine already refreshed it while we waited
             acct = self.pool.get_account(aid) or acct
-            return acct.token_valid
+            if acct.token_valid:
+                return True
+                
+            return await self.refresh_token(acct, client)
 
     async def get_valid_token(self, client: httpx.AsyncClient) -> tuple[str, str]:
         """Return (access_token, account_id) for a healthy account.

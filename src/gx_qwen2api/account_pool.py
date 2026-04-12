@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
+import datetime
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -61,6 +63,9 @@ class AccountState:
     last_auto_refresh_at: float = 0.0
     last_auto_refresh_result: str = ""  # "success", "failed", "skipped", ""
     last_auto_refresh_error: str = ""
+    # Persistence tracking
+    last_write_persisted: bool = True
+    last_write_error: str = ""
     _raw_creds: dict[str, Any] | None = None
 
     @property
@@ -135,7 +140,6 @@ class AccountState:
 
     def mark_auth_error(self, error_message: str) -> None:
         """Mark this account as having an auth error."""
-        import time
         self.last_auth_error = error_message[:500]
         self.last_auth_failure_at = time.time()
         self.last_auth_check_at = time.time()
@@ -152,7 +156,6 @@ class AccountState:
 
     def mark_refresh_failed(self, error_message: str = "") -> None:
         """Mark token refresh as failed."""
-        import time
         self.last_refresh_success = False
         self.last_auth_failure_at = time.time()
         if not self.last_auth_error:  # Don't override auth errors
@@ -164,7 +167,6 @@ class AccountState:
 
     def mark_refresh_success(self) -> None:
         """Mark token refresh as successful."""
-        import time
         self.last_refresh_success = True
         self.last_auth_success_at = time.time()
         self.clear_auth_error()
@@ -176,7 +178,6 @@ class AccountState:
         return self.health_status.value
 
     def to_dict(self) -> dict[str, Any]:
-        import time
         return {
             "account_id": self.account_id,
             "creds_file": str(self.creds_file),
@@ -204,6 +205,8 @@ class AccountState:
             "last_auto_refresh_at": self.last_auto_refresh_at or None,
             "last_auto_refresh_result": self.last_auto_refresh_result or None,
             "last_auto_refresh_error": self.last_auto_refresh_error or None,
+            "last_write_persisted": self.last_write_persisted,
+            "last_write_error": self.last_write_error or None,
             "has_refresh_token": bool(self._raw_creds and self._raw_creds.get("refresh_token")),
         }
 
@@ -276,7 +279,6 @@ class AccountPool:
         )
 
         if raw.get("expiry_date"):
-            import datetime
             dt = datetime.datetime.fromtimestamp(
                 raw["expiry_date"] / 1000, tz=datetime.timezone.utc
             )
@@ -342,12 +344,11 @@ class AccountPool:
         if not eligible:
             return None
 
-        for _ in range(len(eligible)):
-            self._rr_index %= len(eligible)
-            acct = eligible[self._rr_index]
-            self._rr_index += 1
-            return acct
-        return None
+        # Ensure index is within range of currently eligible accounts
+        idx = self._rr_index % len(eligible)
+        acct = eligible[idx]
+        self._rr_index = (idx + 1) % len(eligible)
+        return acct
 
     # ── Admin operations ──────────────────────────────────────────
 
@@ -376,25 +377,26 @@ class AccountPool:
         return list(self.accounts.values())
 
     def save_creds(self, account_id: str, raw: dict[str, Any]) -> None:
-        """Persist updated credentials to disk.
-
-        Gracefully handles permission errors (e.g., when CREDS_DIR is a
-        host bind mount with restrictive ownership). On write failure,
-        logs a warning and continues with in-memory-only state.
-        """
+        """Persist updated credentials to disk."""
         acct = self.accounts.get(account_id)
         if not acct:
             return
-        import logging
+        
         try:
             acct.creds_file.write_text(json.dumps(raw, indent=2))
+            acct.last_write_persisted = True
+            acct.last_write_error = ""
         except PermissionError:
+            acct.last_write_persisted = False
+            acct.last_write_error = "Permission denied"
             logging.getLogger("gx_qwen2api").warning(
                 "Cannot write %s — permission denied. "
                 "Token updated in-memory only; changes will not persist across restarts.",
                 acct.creds_file,
             )
         except OSError as exc:
+            acct.last_write_persisted = False
+            acct.last_write_error = str(exc)
             logging.getLogger("gx_qwen2api").warning(
                 "Cannot write %s — %s. "
                 "Token updated in-memory only.",

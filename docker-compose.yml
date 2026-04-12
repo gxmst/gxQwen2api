@@ -5,8 +5,14 @@ services:
     ports:
       - "${HOST_ADDRESS:-0.0.0.0}:${HOST_PORT:-31998}:${PORT:-31998}"
 
+    # We recommend using a named volume for credentials to ensure reliable 
+    # write permissions across different OS environments.
+    # NOTE: If you are upgrading from an older version using ~/.qwen,
+    # see the "Migration" section in README.md to avoid losing accounts.
     volumes:
-      - ~/.qwen:/app/data/creds
+      - qwen_creds:/app/data/creds
+      # For advanced bind-mount setup (be careful with permissions!):
+      # - ~/.qwen:/app/data/creds
 
     environment:
       - PORT=${PORT:-31998}
@@ -23,3 +29,6 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
 
     restart: unless-stopped
+
+volumes:
+  qwen_creds:

@@ -7,6 +7,10 @@ import time
 import uuid
 from typing import Any
 
+from typing import Any
+import logging
+import datetime
+
 import httpx
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -25,6 +29,8 @@ from ..models import (
     resolve_model,
     resolve_thinking_params,
 )
+
+logger = logging.getLogger("gx_qwen2api.chat")
 
 router = APIRouter()
 
@@ -79,6 +85,8 @@ async def _handle_streaming(
         try:
             async for chunk in resp.aiter_bytes():
                 yield chunk
+        except Exception as e:
+            logger.error(f"Stream generation error for {request_id} (account: {account_id}): {e}")
         finally:
             await resp.aclose()
 
@@ -296,15 +304,12 @@ async def _try_next_account(auth: AuthManager, client: httpx.AsyncClient) -> tup
 
 
 def log_info(msg: str) -> None:
-    import logging
-    logging.getLogger("gx_qwen2api").info(msg)
+    logger.info(msg)
 
 
 def log_warning(msg: str) -> None:
-    import logging
-    logging.getLogger("gx_qwen2api").warning(msg)
+    logger.warning(msg)
 
 
 def log_error(msg: str) -> None:
-    import logging
-    logging.getLogger("gx_qwen2api").error(msg)
+    logger.error(msg)

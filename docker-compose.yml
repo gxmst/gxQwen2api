@@ -6,7 +6,7 @@ services:
       - "${HOST_ADDRESS:-0.0.0.0}:${HOST_PORT:-31998}:${PORT:-31998}"
 
     volumes:
-      - ~/.qwen:/mnt/qwen-creds:ro
+      - ~/.qwen:/mnt/qwen-creds
 
     environment:
       - PORT=${PORT:-31998}

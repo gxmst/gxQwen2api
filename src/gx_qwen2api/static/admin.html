@@ -844,15 +844,11 @@ async function handleUploadFile(file) {
 
 // ── Auth status (injected by backend) ───────────────────────────
 /* __ADMIN_AUTH_INJECT__ */
-// Fallback for when the page is served directly as a static file
-// (no backend injection). Do NOT use const here to avoid duplicate
-// declaration when the backend has already injected the value.
-if (typeof ADMIN_AUTH_REQUIRED === 'undefined') {
-  var ADMIN_AUTH_REQUIRED = false;
-}
+// ADMIN_AUTH_REQUIRED is only defined if the backend injected it.
+// Do NOT declare a fallback here — just check with typeof at use time.
 
 function showLoginStatus() {
-  if (ADMIN_AUTH_REQUIRED) {
+  if (typeof ADMIN_AUTH_REQUIRED !== 'undefined' && ADMIN_AUTH_REQUIRED) {
     const el = document.getElementById('loginStatus');
     if (el) el.style.display = 'flex';
   }

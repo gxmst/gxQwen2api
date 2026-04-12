@@ -1,13 +1,10 @@
 #!/bin/sh
 set -e
 
-# Copy mounted Qwen credentials (read-only) to nonroot-user-owned directory.
-MOUNT_DIR="/mnt/qwen-creds"
-TARGET_DIR="/home/nonroot/.qwen"
-
-if [ -d "$MOUNT_DIR" ]; then
-  cp -a "$MOUNT_DIR"/. "$TARGET_DIR"/
-  chown -R nonroot:nonroot "$TARGET_DIR"
+# Ensure CREDS_DIR is writable by nonroot user.
+# If it's a bind mount, we attempt to fix ownership.
+if [ -n "$CREDS_DIR" ] && [ -d "$CREDS_DIR" ]; then
+  chown -R nonroot:nonroot "$CREDS_DIR"
 fi
 
 # Drop to non-root user and exec the CMD

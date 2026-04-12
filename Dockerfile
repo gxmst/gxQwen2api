@@ -28,7 +28,7 @@ RUN groupadd --system --gid 999 nonroot \
 
 COPY --from=builder --chown=nonroot:nonroot /app /app
 
-RUN mkdir -p /home/nonroot/.qwen && chown -R nonroot:nonroot /home/nonroot/.qwen
+RUN mkdir -p /app/data/creds && chown -R nonroot:nonroot /app/data/creds
 
 ENV PATH="/app/.venv/bin:$PATH"
 WORKDIR /app

@@ -6,7 +6,7 @@ services:
       - "${HOST_ADDRESS:-0.0.0.0}:${HOST_PORT:-31998}:${PORT:-31998}"
 
     volumes:
-      - ~/.qwen:/mnt/qwen-creds
+      - ~/.qwen:/app/data/creds
 
     environment:
       - PORT=${PORT:-31998}
@@ -18,7 +18,7 @@ services:
       - API_KEY=${API_KEY:-}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-coder-model}
       - LOG_REQUESTS=${LOG_REQUESTS:-true}
-      - CREDS_DIR=/mnt/qwen-creds
+      - CREDS_DIR=/app/data/creds
       - ADMIN_ENABLED=${ADMIN_ENABLED:-true}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
 

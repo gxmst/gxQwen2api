@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     # Simple admin auth password (set in production!)
     admin_password: str = ""
 
+    # Auto-refresh (background keep-alive)
+    auto_refresh_enabled: bool = True
+    auto_refresh_interval_seconds: int = 300  # 5 minutes
+    auto_refresh_threshold_minutes: int = 30  # refresh if < 30 min left
+
     @property
     def api_keys(self) -> list[str] | None:
         if not self.api_key:

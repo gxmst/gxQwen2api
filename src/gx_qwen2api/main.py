@@ -15,6 +15,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 from .account_pool import AccountPool
 from .auth import AuthManager
+from .auto_refresher import AutoRefresher
 from .config import settings
 from .event_logger import event_logger
 from .routes import chat, health, models as models_router
@@ -49,6 +50,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _app.state.session_id = str(uuid.uuid4())
     _app.state.start_time = time.time()
 
+    # Start auto-refresher background task
+    auto_refresher = AutoRefresher(pool, _app.state.auth, _app.state.http_client)
+    _app.state.auto_refresher = auto_refresher
+    auto_refresher.start()
+
     event_logger.server_started(host=settings.address, port=settings.port)
 
     # Print startup summary
@@ -77,6 +83,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         pass  # Windows or non-main thread
 
     yield
+
+    # Shutdown auto-refresher
+    await _app.state.auto_refresher.stop()
 
     event_logger.shutdown("Server stopping")
     await _app.state.http_client.aclose()

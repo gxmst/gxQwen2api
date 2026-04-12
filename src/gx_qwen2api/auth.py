@@ -158,6 +158,40 @@ class AuthManager:
         )
         return True
 
+    async def coordinated_refresh(
+        self, acct: AccountState, client: httpx.AsyncClient
+    ) -> bool:
+        """Refresh with per-account concurrency coordination.
+
+        If another coroutine is already refreshing this account, wait for it
+        instead of starting a duplicate refresh. Returns True on success.
+        """
+        aid = acct.account_id
+        if aid not in self._refresh_events:
+            self._refresh_events[aid] = asyncio.Event()
+            self._refresh_events[aid].clear()
+
+        if not self._refresh_locks.get(aid):
+            # We are the first — do the refresh
+            self._refresh_locks[aid] = True
+            try:
+                ok = await self.refresh_token(acct, client)
+                return ok
+            finally:
+                self._refresh_locks[aid] = False
+                self._refresh_events[aid].set()
+                # Clear the event so the next refresh cycle is clean
+                self._refresh_events.pop(aid, None)
+        else:
+            # Another coroutine is refreshing — wait for it
+            try:
+                await asyncio.wait_for(self._refresh_events[aid].wait(), timeout=30)
+            except TimeoutError:
+                pass
+            # Re-read state after wait
+            acct = self.pool.get_account(aid) or acct
+            return acct.token_valid
+
     async def get_valid_token(self, client: httpx.AsyncClient) -> tuple[str, str]:
         """Return (access_token, account_id) for a healthy account.
 
@@ -176,34 +210,11 @@ class AuthManager:
             if acct.token_valid:
                 return acct.access_token, acct.account_id
 
-            # Need refresh — acquire per-account lock
-            aid = acct.account_id
-            if aid not in self._refresh_events:
-                self._refresh_events[aid] = asyncio.Event()
-                self._refresh_events[aid].clear()
-
-            if not self._refresh_locks.get(aid):
-                # We are the first — do the refresh
-                self._refresh_locks[aid] = True
-                try:
-                    ok = await self.refresh_token(acct, client)
-                    if ok and acct.token_valid:
-                        return acct.access_token, acct.account_id
-                finally:
-                    self._refresh_locks[aid] = False
-                    self._refresh_events[aid].set()
-                    # Clear the event so the next refresh cycle is clean
-                    del self._refresh_events[aid]
-            else:
-                # Another coroutine is refreshing — wait for it
-                try:
-                    await asyncio.wait_for(self._refresh_events[aid].wait(), timeout=30)
-                except TimeoutError:
-                    pass
-                # Re-read state after wait
-                acct = self.pool.get_account(aid) or acct
-                if acct.token_valid:
-                    return acct.access_token, acct.account_id
+            # Need refresh — use coordinated refresh to avoid races
+            ok = await self.coordinated_refresh(acct, client)
+            acct = self.pool.get_account(acct.account_id) or acct
+            if ok and acct.token_valid:
+                return acct.access_token, acct.account_id
 
         raise RuntimeError(
             "No valid token available. All accounts are expired, in cooldown, or disabled."

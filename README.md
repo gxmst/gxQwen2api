@@ -7,6 +7,7 @@ OpenAI 兼容的千问 OAuth 反代服务，支持多账号池、凭证热重载
 - **多账号池** — 自动扫描凭证目录下所有 `*.json` 凭证文件，注册为独立账号
 - **精准账号状态** — 不再仅依赖过期时间，实时追踪认证错误、刷新失败、冷却等状态
 - **Token 校验** — 管理面板提供"校验"按钮，手动验证账号当前是否真实可用
+- **自动预刷新** — 后台定期扫描，在 token 到期前自动续期，无需等待用户请求
 - **账号启用/禁用** — 在管理面板中手动开关单个账号，无需重启
 - **凭证热重载** — 文件 mtime 自动检测 + `SIGHUP` 信号 + 手动重载，改凭证无需重启
 - **详细刷新日志** — 记录 refresh 请求 URL、status code、content-type、响应体预览、耗时
@@ -129,6 +130,46 @@ uv run python -m gx_qwen2api.main
 | `CREDS_DIR` | `~/.qwen` | 凭证目录（扫描 `*.json`） |
 | `ADMIN_ENABLED` | `true` | 启用管理面板 |
 | `ADMIN_PASSWORD` | _(空)_ | 管理员密码（可选，设置后所有管理操作需要认证） |
+
+## 自动预刷新
+
+本项目支持后台自动预刷新，在 `access_token` 即将过期前自动续期，无需等待用户请求。
+
+### 工作原理
+
+1. 服务启动后，后台任务定期扫描所有账号
+2. 对每个满足条件的账号（enabled + 有 refresh_token + 不在冷却中 + token 剩余时间 < 阈值），自动调用 refresh_token 续期
+3. refresh 成功后自动更新 access_token、expiry_date，并持久化到磁盘（如果权限允许）
+4. refresh 失败时标记账号状态为 `refresh_failed`，管理面板中可见
+
+### 配置
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `AUTO_REFRESH_ENABLED` | `true` | 启用自动预刷新 |
+| `AUTO_REFRESH_INTERVAL_SECONDS` | `300` | 扫描周期（秒），默认 5 分钟 |
+| `AUTO_REFRESH_THRESHOLD_MINUTES` | `30` | 预刷新阈值，token 剩余时间小于此值时触发刷新 |
+
+### 可以自动续期的情况
+
+- 凭证文件中存在有效的 `refresh_token`
+- 账号处于 enabled 状态
+- 账号不在冷却期
+
+### 必须人工重新登录的情况
+
+- `refresh_token` 本身失效（Qwen 服务端拒绝刷新）
+- 凭证文件中没有 `refresh_token`
+- 需要更换账号或重新认证
+
+此时管理面板会显示"无 refresh_token，无法自动续期"或"自动刷新失败"，需要用户在本地执行 `qwen login` 重新生成凭证并上传。
+
+### 注意事项
+
+- **本项目不保存账号密码** — 所有认证基于 OAuth refresh_token
+- **首次使用**需用户在 Windows / Qwen Code 侧完成 `qwen login` 生成凭证
+- 如果 Docker 挂载目录不可写，自动刷新的 token 仅在内存中有效，容器重启后需重新刷新
+- 自动预刷新与用户请求的 refresh 逻辑复用同一套代码，不会互相冲突
 
 ## 凭证热重载
 

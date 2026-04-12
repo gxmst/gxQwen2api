@@ -170,6 +170,7 @@ a { color: var(--accent); }
       <button class="btn" onclick="loadLogs()" data-i18n="btn_refresh_logs">📋 刷新日志</button>
       <button class="btn btn-green" onclick="doAction('/admin/api/scan', 'scan')" data-i18n="btn_scan">📁 扫描凭证目录</button>
       <button class="btn" onclick="doAction('/admin/api/reload-all', 'reload_all')" data-i18n="btn_reload_all">🔄 重载全部</button>
+      <button class="btn btn-orange" onclick="runAutoRefreshNow()" data-i18n="btn_auto_refresh_now">⚡ 立即预刷新</button>
     </div>
     <div class="topbar-right">
       <div id="loginStatus" class="login-status" style="display:none">
@@ -201,6 +202,15 @@ a { color: var(--accent); }
     <div class="health-item"><div class="val green" id="hHealthy">-</div><div class="label" data-i18n="health_healthy">健康账号</div></div>
     <div class="health-item"><div class="val" id="hRequests">-</div><div class="label" data-i18n="health_requests">总请求数</div></div>
     <div class="health-item"><div class="val" id="hUptime">-</div><div class="label" data-i18n="health_uptime">运行时间</div></div>
+  </div>
+
+  <!-- Auto-refresh status bar -->
+  <div id="autoRefreshBar" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 16px;margin-bottom:12px;font-size:0.8rem;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+    <span data-i18n="auto_refresh_status_label">自动预刷新:</span>
+    <span id="arStatus" style="color:var(--muted)" data-i18n="loading">加载中...</span>
+    <span id="arInterval" style="color:var(--muted)"></span>
+    <span id="arThreshold" style="color:var(--muted)"></span>
+    <span id="arLastCycle" style="color:var(--muted)"></span>
   </div>
 
   <h2 data-i18n="section_accounts">账号列表</h2>
@@ -242,6 +252,21 @@ const i18n = {
     btn_logout: '退出',
     auto_refresh_label: '自动刷新:',
     auto_refresh_off: '关闭',
+    auto_refresh_status_label: '自动预刷新:',
+    btn_auto_refresh_now: '⚡ 立即预刷新',
+    ar_title: '自动续期',
+    ar_no_refresh_token: '无 refresh_token，无法自动续期',
+    ar_result_success: '成功',
+    ar_result_failed: '失败',
+    ar_result_skipped: '已跳过',
+    ar_last_time: '最近执行',
+    ar_last_result: '结果',
+    ar_status_on: '✅ 已启用',
+    ar_status_off: '❌ 已关闭',
+    ar_interval: '周期: {s}s',
+    ar_threshold: '阈值: {m}min',
+    ar_last_cycle: '上次周期: {ago}',
+    ar_manual_run: '已触发',
     health_accounts: '账号总数',
     health_healthy: '健康账号',
     health_requests: '总请求数',
@@ -339,6 +364,21 @@ const i18n = {
     btn_logout: 'Logout',
     auto_refresh_label: 'Auto-refresh:',
     auto_refresh_off: 'Off',
+    auto_refresh_status_label: 'Auto-refresh:',
+    btn_auto_refresh_now: '⚡ Run Auto-Refresh',
+    ar_title: 'Auto-renew',
+    ar_no_refresh_token: 'No refresh_token, cannot auto-renew',
+    ar_result_success: 'Success',
+    ar_result_failed: 'Failed',
+    ar_result_skipped: 'Skipped',
+    ar_last_time: 'Last run',
+    ar_last_result: 'Result',
+    ar_status_on: '✅ Enabled',
+    ar_status_off: '❌ Disabled',
+    ar_interval: 'Interval: {s}s',
+    ar_threshold: 'Threshold: {m}min',
+    ar_last_cycle: 'Last cycle: {ago}',
+    ar_manual_run: 'Triggered',
     health_accounts: 'Total Accounts',
     health_healthy: 'Healthy',
     health_requests: 'Total Requests',
@@ -571,18 +611,48 @@ function renderTimestamps(a) {
   return `<div class="timestamps"><div style="color:var(--muted);font-size:0.7rem;margin-bottom:2px">${t('meta_timestamps')}</div>${rows.join('')}</div>`;
 }
 
+function renderAutoRefreshInfo(a) {
+  const hasRt = a.has_refresh_token;
+  const lastResult = a.last_auto_refresh_result;
+  const lastAt = a.last_auto_refresh_at;
+  const lastErr = a.last_auto_refresh_error;
+
+  if (!hasRt) {
+    return `<div style="font-size:0.72rem;color:var(--yellow);margin-top:4px">⚠️ ${t('ar_no_refresh_token')}</div>`;
+  }
+
+  let resultBadge = '';
+  if (lastResult === 'success') {
+    resultBadge = `<span style="color:var(--green)">✅ ${t('ar_result_success')}</span>`;
+  } else if (lastResult === 'failed') {
+    resultBadge = `<span style="color:var(--red)">❌ ${t('ar_result_failed')}${lastErr ? ': ' + escHtml(lastErr) : ''}</span>`;
+  } else if (lastResult === 'skipped') {
+    resultBadge = `<span style="color:var(--muted)">⏭️ ${t('ar_result_skipped')}</span>`;
+  }
+
+  const timeStr = lastAt ? fmtTimestamp(lastAt) : t('never');
+
+  return `<div class="timestamps"><div style="color:var(--muted);font-size:0.7rem;margin-bottom:2px">${t('ar_title')}</div>
+    <div class="ts-row"><span class="ts-label">${t('ar_last_time')}</span><span class="ts-value">${timeStr}</span></div>
+    <div class="ts-row"><span class="ts-label">${t('ar_last_result')}</span><span class="ts-value">${resultBadge}</span></div>
+  </div>`;
+}
+
 // ── Main load ───────────────────────────────────────────────────
 async function loadAccounts() {
-  const [accRes, logsRes, healthRes] = await Promise.all([
+  const [accRes, logsRes, healthRes, arRes] = await Promise.all([
     fetch(API + '/admin/api/accounts'),
     fetch(API + '/admin/api/logs?limit=100'),
     fetch(API + '/health'),
+    fetch(API + '/admin/api/auto-refresh/status').catch(() => null),
   ]);
   const accounts = await accRes.json();
   const logs = await logsRes.json();
   const health = healthRes.ok ? await healthRes.json() : null;
+  const arStatus = arRes && arRes.ok ? await arRes.json() : null;
   renderAccounts(accounts, health);
   renderLogs(logs);
+  renderAutoRefreshStatus(arStatus);
   startCooldownTimers(accounts);
 }
 
@@ -663,6 +733,7 @@ function renderAccounts(accounts, health) {
             <span class="meta-label">${t('meta_last_refresh')}</span>
             <span class="meta-value">${a.last_refresh || '-'}</span>
           </div>
+          ${renderAutoRefreshInfo(a)}
           ${timestampsHtml}
           ${errDetail}
           <div id="${verifyDivId}"></div>
@@ -706,6 +777,51 @@ function startCooldownTimers(accounts) {
   });
 }
 
+// ── Auto-refresh status bar ─────────────────────────────────────
+function renderAutoRefreshStatus(data) {
+  const arStatusEl = document.getElementById('arStatus');
+  const arIntervalEl = document.getElementById('arInterval');
+  const arThresholdEl = document.getElementById('arThreshold');
+  const arLastCycleEl = document.getElementById('arLastCycle');
+  if (!arStatusEl) return;
+
+  if (!data || !data.config) {
+    arStatusEl.textContent = '-';
+    return;
+  }
+  const cfg = data.config;
+
+  arStatusEl.textContent = cfg.enabled ? t('ar_status_on') : t('ar_status_off');
+  arStatusEl.style.color = cfg.enabled ? 'var(--green)' : 'var(--red)';
+
+  if (cfg.enabled) {
+    arIntervalEl.textContent = t('ar_interval').replace('{s}', cfg.interval_seconds);
+    arThresholdEl.textContent = t('ar_threshold').replace('{m}', cfg.threshold_minutes);
+  } else {
+    arIntervalEl.textContent = '';
+    arThresholdEl.textContent = '';
+  }
+
+  if (cfg.last_cycle_started) {
+    const ago = Math.round(Date.now() / 1000 - cfg.last_cycle_started);
+    const agoStr = fmtTimestamp(cfg.last_cycle_started);
+    arLastCycleEl.textContent = t('ar_last_cycle').replace('{ago}', agoStr);
+  } else {
+    arLastCycleEl.textContent = '';
+  }
+}
+
+async function runAutoRefreshNow() {
+  try {
+    const res = await fetch(API + '/admin/api/auto-refresh/run', { method: 'POST' });
+    const data = await res.json();
+    showToast(`${t('ar_manual_run')} — ${data.detail || 'ok'}`, 'success');
+    await loadAccounts();
+  } catch (e) {
+    showToast(`Auto-refresh error: ${e.message}`, 'error');
+  }
+}
+
 function renderLogs(logs) {
   const el = document.getElementById('logsBox');
   document.getElementById('logCount').textContent = `(${logs.length})`;
@@ -714,6 +830,8 @@ function renderLogs(logs) {
     request: 'var(--accent)', response: 'var(--green)', error: 'var(--red)',
     refresh_start: 'var(--yellow)', refresh_ok: 'var(--green)', refresh_fail: 'var(--red)',
     server: 'var(--muted)', upload: 'var(--purple)',
+    auto_refresh_start: 'var(--yellow)', auto_refresh_ok: 'var(--green)',
+    auto_refresh_skip: 'var(--muted)', auto_refresh_fail: 'var(--red)',
   };
   el.innerHTML = logs.reverse().map(l => {
     const color = eventColors[l.event] || 'var(--text)';

@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ..account_pool import AccountPool
 from ..auth import AuthManager
+from ..auto_refresher import AutoRefresher
 from ..config import settings
 from ..event_logger import event_logger
 
@@ -178,7 +179,8 @@ async def api_refresh(request: Request, account_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
     if not acct._raw_creds or not acct._raw_creds.get("refresh_token"):
         raise HTTPException(status_code=400, detail="No refresh token for this account")
-    ok = await auth.refresh_token(acct, client)
+    # Use coordinated_refresh to avoid races with background/auto-refresh
+    ok = await auth.coordinated_refresh(acct, client)
     return {"status": "ok" if ok else "failed", "account_id": account_id}
 
 
@@ -293,6 +295,26 @@ async def api_clear_logs(request: Request) -> dict[str, str]:
     _check_admin(request)
     event_logger.clear_logs()
     return {"status": "ok"}
+
+
+# ── Auto-refresh ────────────────────────────────────────────
+
+@router.get("/api/auto-refresh/status")
+async def api_auto_refresh_status(request: Request) -> dict[str, Any]:
+    _check_admin(request)
+    refresher: AutoRefresher = request.app.state.auto_refresher
+    return {
+        "config": refresher.get_config(),
+    }
+
+
+@router.post("/api/auto-refresh/run")
+async def api_auto_refresh_run(request: Request) -> dict[str, str]:
+    """Trigger a manual auto-refresh cycle."""
+    _check_admin(request)
+    refresher: AutoRefresher = request.app.state.auto_refresher
+    result = await refresher.run_once()
+    return {"status": "ok", "detail": result}
 
 
 # ── Upload credential ────────────────────────────────────────────

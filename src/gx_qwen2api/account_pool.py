@@ -57,6 +57,10 @@ class AccountState:
     last_auth_check_at: float = 0.0  # timestamp of last explicit verify
     last_auth_success_at: float = 0.0
     last_auth_failure_at: float = 0.0
+    # Auto-refresh tracking
+    last_auto_refresh_at: float = 0.0
+    last_auto_refresh_result: str = ""  # "success", "failed", "skipped", ""
+    last_auto_refresh_error: str = ""
     _raw_creds: dict[str, Any] | None = None
 
     @property
@@ -196,6 +200,11 @@ class AccountState:
             "last_auth_check_at": self.last_auth_check_at or None,
             "last_auth_success_at": self.last_auth_success_at or None,
             "last_auth_failure_at": self.last_auth_failure_at or None,
+            # Auto-refresh fields
+            "last_auto_refresh_at": self.last_auto_refresh_at or None,
+            "last_auto_refresh_result": self.last_auto_refresh_result or None,
+            "last_auto_refresh_error": self.last_auto_refresh_error or None,
+            "has_refresh_token": bool(self._raw_creds and self._raw_creds.get("refresh_token")),
         }
 
     def record_error(self, message: str, cooldown_s: int = 60) -> None:
@@ -302,6 +311,10 @@ class AccountPool:
             new_state.last_auth_check_at = acct.last_auth_check_at
             new_state.last_auth_success_at = acct.last_auth_success_at
             new_state.last_auth_failure_at = acct.last_auth_failure_at
+            # Preserve auto-refresh state
+            new_state.last_auto_refresh_at = acct.last_auto_refresh_at
+            new_state.last_auto_refresh_result = acct.last_auto_refresh_result
+            new_state.last_auto_refresh_error = acct.last_auto_refresh_error
             # Re-compute health after restoring state (may change if token got updated on disk)
             new_state.update_health()
             self.accounts[account_id] = new_state

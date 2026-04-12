@@ -175,5 +175,48 @@ class EventLogger:
             {"reason": reason, "detail": f"Shutdown: {reason}"},
         )
 
+    # ── Auto-refresh ──────────────────────────────────────────────
+
+    def auto_refresh_start(self) -> None:
+        self._emit(
+            logging.INFO, "auto_refresh_start",
+            {"detail": "Auto-refresh cycle started"},
+        )
+
+    def auto_refresh_ok(self, account_id: str, elapsed_ms: float, expires_at: str) -> None:
+        self._emit(
+            logging.INFO, "auto_refresh_ok",
+            {
+                "account_id": account_id,
+                "elapsed_ms": round(elapsed_ms, 1),
+                "expires_at": expires_at,
+                "detail": f"Auto-refresh OK: {account_id}, expires {expires_at}",
+            },
+        )
+
+    def auto_refresh_skip(self, account_id: str, reason: str) -> None:
+        self._emit(
+            logging.INFO, "auto_refresh_skip",
+            {
+                "account_id": account_id,
+                "reason": reason,
+                "detail": f"Auto-refresh skipped: {account_id} ({reason})",
+            },
+        )
+
+    def auto_refresh_fail(self, account_id: str, reason: str, error: str = "") -> None:
+        detail = f"Auto-refresh failed: {account_id} ({reason})"
+        if error:
+            detail += f" — {error[:150]}"
+        self._emit(
+            logging.ERROR, "auto_refresh_fail",
+            {
+                "account_id": account_id,
+                "reason": reason,
+                "error": error[:500] if error else "",
+                "detail": detail,
+            },
+        )
+
 
 event_logger = EventLogger()

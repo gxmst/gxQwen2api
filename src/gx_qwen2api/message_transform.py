@@ -45,10 +45,13 @@ def _load_system_prompt() -> str | None:
         p = Path(prompt_file)
         if p.exists():
             return p.read_text(encoding="utf-8").strip()
-    # Default: project root sys-prompt.txt
-    default_path = Path(__file__).resolve().parents[3] / "sys-prompt.txt"
-    if default_path.exists():
-        return default_path.read_text(encoding="utf-8").strip()
+    # Default: search for sys-prompt.txt starting from nearest parent directory
+    # to avoid hardcoding path depth (works both in Docker /app/ and local dev)
+    base = Path(__file__).resolve().parent
+    for parent in [base, *base.parents]:
+        candidate = parent / "sys-prompt.txt"
+        if candidate.exists():
+            return candidate.read_text(encoding="utf-8").strip()
     return None
 
 

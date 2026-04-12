@@ -86,6 +86,8 @@ a { color: var(--accent); }
     <button class="btn" onclick="loadLogs()">Refresh Logs</button>
     <button class="btn btn-green" onclick="doAction('/admin/api/scan', 'Scanned')">Scan Creds Dir</button>
     <button class="btn" onclick="doAction('/admin/api/reload-all', 'Reloaded all')">Reload All</button>
+    <button class="btn btn-blue" onclick="document.getElementById('credFile').click()">Upload Credential</button>
+    <input type="file" id="credFile" accept=".json" style="display:none" onchange="uploadCredential()">
     <button class="btn btn-red btn-sm" onclick="doAction('/admin/api/logs/clear', 'Cleared')">Clear Logs</button>
     <div class="auto-refresh">
       Auto-refresh:
@@ -253,6 +255,24 @@ async function doAction(url, label) {
     await loadAccounts();
   } catch (e) {
     showToast(`${label} — error: ${e.message}`, true);
+  }
+}
+
+async function uploadCredential() {
+  const input = document.getElementById('credFile');
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await fetch(API + '/admin/api/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Upload failed');
+    showToast(`Uploaded: ${data.account_id} (${data.action})`);
+    await loadAccounts();
+  } catch (e) {
+    showToast(`Upload error: ${e.message}`, true);
   }
 }
 

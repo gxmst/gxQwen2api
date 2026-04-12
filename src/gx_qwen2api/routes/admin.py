@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
+import logging
+import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ..account_pool import AccountPool
@@ -178,3 +181,93 @@ async def api_clear_logs(request: Request) -> dict[str, str]:
     _check_admin(request)
     event_logger.clear_logs()
     return {"status": "ok"}
+
+
+# ── Upload credential ────────────────────────────────────────────
+
+_MAX_UPLOAD_BYTES = 64 * 1024  # 64 KB
+_REQUIRED_KEYS = {"refresh_token"}  # Must have at minimum this key
+
+# Sanitize: allow alphanumeric, dash, underscore, dot. Strip path separators.
+_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.json$")
+
+
+@router.post("/api/upload")
+async def api_upload(request: Request, file: UploadFile) -> dict[str, Any]:
+    _check_admin(request)
+    """Validate + save uploaded credential JSON file."""
+    # 1. Check filename
+    name = file.filename or ""
+    # Strip any directory traversal
+    name = Path(name).name
+    if not name or not _FILENAME_RE.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid filename: {html.escape(name)}. Must be a simple .json name (alphanumeric, dashes, underscores, dots).",
+        )
+
+    # 2. Read with size limit
+    raw = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(raw) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large (max {_MAX_UPLOAD_BYTES // 1024} KB).",
+        )
+
+    # 3. Parse JSON
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Not valid JSON.")
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="JSON must be an object.")
+
+    # 4. Validate it looks like Qwen creds
+    missing = _REQUIRED_KEYS - set(data.keys())
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required keys: {', '.join(sorted(missing))}. Expected a Qwen OAuth credential file.",
+        )
+
+    # 5. Ensure sensible defaults
+    data.setdefault("access_token", "")
+    data.setdefault("token_type", "Bearer")
+    data.setdefault("resource_url", "https://portal.qwen.ai/v1")
+    if not data.get("expiry_date"):
+        import time
+        data["expiry_date"] = int(time.time() * 1000) + 7 * 24 * 3600 * 1000  # 7 days
+
+    # 6. Save to creds_dir
+    pool: AccountPool = request.app.state.pool
+    target = settings.creds_dir / name
+    exists = target.exists()
+    target.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    account_id = Path(name).stem
+
+    # 7. Register in pool
+    state = pool._try_load_account(account_id, target)
+    if state:
+        pool.accounts[account_id] = state
+    else:
+        pool.scan()
+
+    logging.getLogger("gx_qwen2api").info(
+        "Uploaded credential %s (%s)", account_id, "overwrite" if exists else "new"
+    )
+
+    event_logger._emit(
+        logging.INFO, "upload",
+        {
+            "account_id": account_id,
+            "detail": f"{'Overwritten' if exists else 'New'} credential: {account_id}",
+        },
+    )
+
+    return {
+        "status": "ok",
+        "account_id": account_id,
+        "action": "overwritten" if exists else "new",
+    }

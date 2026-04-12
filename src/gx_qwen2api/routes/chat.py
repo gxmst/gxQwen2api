@@ -191,6 +191,9 @@ async def chat_completions(
                 try:
                     log_info(f"Auth error {status} on {account_id}, refreshing...")
                     if acct:
+                        # Mark auth error immediately so dashboard shows it
+                        acct.mark_auth_error(error_message)
+                        
                         ok = await auth.refresh_token(acct, client)
                         if ok:
                             headers = build_headers(acct.access_token, streaming=is_streaming)
@@ -210,6 +213,7 @@ async def chat_completions(
                         )
                     if acct:
                         acct.record_error(str(refresh_err))
+                        acct.mark_refresh_failed(str(refresh_err))
                     return JSONResponse(
                         status_code=401,
                         content=make_error_response("Authentication failed. Please re-authenticate with Qwen CLI.", "authentication_error", "invalid_token"),
@@ -218,6 +222,7 @@ async def chat_completions(
                 # Auth refresh didn't help — try next account
                 if acct:
                     acct.record_error(f"Auth error {status}")
+                    acct.mark_auth_error(f"Auth error {status}")
                 new_token, new_account_id = await _try_next_account(auth, client)
                 if new_token:
                     headers = build_headers(new_token, streaming=is_streaming)

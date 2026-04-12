@@ -30,6 +30,7 @@ class AuthManager:
         raw = acct._raw_creds
         if not raw or not raw.get("refresh_token"):
             acct.record_error("No refresh token available")
+            acct.mark_refresh_failed("No refresh token available")
             event_logger.refresh_failed(
                 account_id=acct.account_id,
                 reason="no_refresh_token",
@@ -58,6 +59,7 @@ class AuthManager:
         except TimeoutError:
             elapsed = time.monotonic() - t0
             acct.record_error(f"Timeout after {elapsed:.2f}s")
+            acct.mark_refresh_failed(f"Timeout after {elapsed:.2f}s")
             event_logger.refresh_failed(
                 account_id=acct.account_id,
                 reason="timeout",
@@ -68,6 +70,7 @@ class AuthManager:
         except Exception as exc:
             elapsed = time.monotonic() - t0
             acct.record_error(f"Request error: {exc}")
+            acct.mark_refresh_failed(f"Request error: {exc}")
             event_logger.refresh_failed(
                 account_id=acct.account_id,
                 reason="request_error",
@@ -87,6 +90,7 @@ class AuthManager:
                 f"body={body_preview!r}"
             )
             acct.record_error(error_msg)
+            acct.mark_refresh_failed(error_msg)
             event_logger.refresh_failed(
                 account_id=acct.account_id,
                 reason="non_200",
@@ -108,6 +112,7 @@ class AuthManager:
                 f"content_type={resp.headers.get('content-type', '<missing>')}, "
                 f"body={body_preview!r}"
             )
+            acct.mark_refresh_failed(f"invalid JSON: status={resp.status_code}")
             event_logger.refresh_failed(
                 account_id=acct.account_id,
                 reason="invalid_json",

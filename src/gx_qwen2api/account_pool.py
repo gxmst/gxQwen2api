@@ -6,10 +6,28 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from .config import settings
+
+
+class AccountHealthStatus(str, Enum):
+    """Detailed health status for an account.
+
+    Priority order (worst to best):
+    disabled > auth_error > refresh_failed > cooldown > expired > expiring_soon > valid
+    """
+    VALID = "valid"
+    EXPIRING_SOON = "expiring_soon"
+    EXPIRED = "expired"
+    COOLDOWN = "cooldown"
+    REFRESH_FAILED = "refresh_failed"
+    AUTH_ERROR = "auth_error"
+    DISABLED = "disabled"
+    NO_TOKEN = "no_token"
+    UNKNOWN = "unknown"
 
 
 @dataclass
@@ -29,6 +47,16 @@ class AccountState:
     last_refresh: str = ""
     last_error: str = ""
     requests_count: int = 0
+    # Detailed health status
+    health_status: AccountHealthStatus = AccountHealthStatus.UNKNOWN
+    status_reason: str = ""  # i18n key (prefixed with 'reason_')
+    status_reason_params: dict[str, Any] = field(default_factory=dict)
+    last_auth_error: str = ""
+    # None means "refresh never attempted", False = failed, True = succeeded
+    last_refresh_success: bool | None = None
+    last_auth_check_at: float = 0.0  # timestamp of last explicit verify
+    last_auth_success_at: float = 0.0
+    last_auth_failure_at: float = 0.0
     _raw_creds: dict[str, Any] | None = None
 
     @property
@@ -44,25 +72,115 @@ class AccountState:
             < self.expiry_date - settings.token_refresh_buffer_s * 1000
         )
 
+    def compute_health(self) -> AccountHealthStatus:
+        """Compute the detailed health status based on multiple factors.
+
+        status_reason is set to an i18n key (prefixed with 'reason_') that
+        the dashboard frontend translates. Dynamic values (counts, durations)
+        are passed via status_reason_params as a dict.
+        """
+        if not self.enabled:
+            self.status_reason = "reason_disabled"
+            self.status_reason_params = {}
+            return AccountHealthStatus.DISABLED
+
+        if self.last_auth_error:
+            self.status_reason = "reason_auth_error"
+            self.status_reason_params = {"error": self.last_auth_error[:100]}
+            return AccountHealthStatus.AUTH_ERROR
+
+        # Only mark refresh_failed if refresh was actually attempted and failed
+        # Don't penalize accounts that just haven't been refreshed yet
+        if self.last_refresh_success is False and not self.token_valid:
+            self.status_reason = "reason_refresh_failed"
+            self.status_reason_params = {"error": self.last_error[:100]}
+            return AccountHealthStatus.REFRESH_FAILED
+
+        if self.is_cooldown:
+            remaining = max(0, int(self.cooldown_until - time.time()))
+            self.status_reason = "reason_cooldown"
+            self.status_reason_params = {"seconds": remaining}
+            return AccountHealthStatus.COOLDOWN
+
+        if not self.access_token or not self.expiry_date:
+            self.status_reason = "reason_no_token"
+            self.status_reason_params = {}
+            return AccountHealthStatus.NO_TOKEN
+
+        now_ms = time.time() * 1000
+        buffer_ms = settings.token_refresh_buffer_s * 1000
+
+        if now_ms >= self.expiry_date:
+            self.status_reason = "reason_expired"
+            self.status_reason_params = {}
+            return AccountHealthStatus.EXPIRED
+
+        if now_ms >= self.expiry_date - buffer_ms:
+            mins_left = max(0, (self.expiry_date - now_ms) / 60000)
+            self.status_reason = "reason_expiring_soon"
+            self.status_reason_params = {"minutes": int(mins_left)}
+            return AccountHealthStatus.EXPIRING_SOON
+
+        self.status_reason = "reason_valid"
+        self.status_reason_params = {}
+        return AccountHealthStatus.VALID
+
+    def update_health(self) -> None:
+        """Update the health_status field based on current state."""
+        self.health_status = self.compute_health()
+
+    def mark_auth_error(self, error_message: str) -> None:
+        """Mark this account as having an auth error."""
+        import time
+        self.last_auth_error = error_message[:500]
+        self.last_auth_failure_at = time.time()
+        self.last_auth_check_at = time.time()
+        self.health_status = AccountHealthStatus.AUTH_ERROR
+        self.status_reason = "reason_auth_error"
+        self.status_reason_params = {"error": error_message[:100]}
+        self.record_error(f"Auth error: {error_message}")
+
+    def clear_auth_error(self) -> None:
+        """Clear auth error state (e.g., after successful refresh)."""
+        self.last_auth_error = ""
+        if self.health_status == AccountHealthStatus.AUTH_ERROR:
+            self.update_health()
+
+    def mark_refresh_failed(self, error_message: str = "") -> None:
+        """Mark token refresh as failed."""
+        import time
+        self.last_refresh_success = False
+        self.last_auth_failure_at = time.time()
+        if not self.last_auth_error:  # Don't override auth errors
+            self.health_status = AccountHealthStatus.REFRESH_FAILED
+            self.status_reason = "reason_refresh_failed"
+            self.status_reason_params = {"error": error_message[:100]}
+            if error_message:
+                self.last_error = error_message[:500]
+
+    def mark_refresh_success(self) -> None:
+        """Mark token refresh as successful."""
+        import time
+        self.last_refresh_success = True
+        self.last_auth_success_at = time.time()
+        self.clear_auth_error()
+        self.update_health()
+
     @property
     def token_status(self) -> str:
-        if not self.access_token:
-            return "no_token"
-        if not self.expiry_date:
-            return "unknown"
-        minutes_left = (self.expiry_date - time.time() * 1000) / 60000
-        if minutes_left < 0:
-            return "expired"
-        if minutes_left < 30:
-            return "expiring_soon"
-        return "valid"
+        """Legacy compatibility - returns health_status as string."""
+        return self.health_status.value
 
     def to_dict(self) -> dict[str, Any]:
+        import time
         return {
             "account_id": self.account_id,
             "creds_file": str(self.creds_file),
             "enabled": self.enabled,
             "token_status": self.token_status,
+            "health_status": self.health_status.value,
+            "status_reason": self.status_reason,
+            "status_reason_params": self.status_reason_params,
             "expires_in_minutes": max(0, (self.expiry_date - time.time() * 1000) / 60000) if self.expiry_date else None,
             "expiry_date": self.expiry_date or None,
             "access_token_loaded": bool(self.access_token),
@@ -72,7 +190,12 @@ class AccountState:
             "cooldown_until": self.cooldown_until or None,
             "last_refresh": self.last_refresh,
             "last_error": self.last_error,
+            "last_auth_error": self.last_auth_error,
             "requests_count": self.requests_count,
+            "last_refresh_success": self.last_refresh_success,
+            "last_auth_check_at": self.last_auth_check_at or None,
+            "last_auth_success_at": self.last_auth_success_at or None,
+            "last_auth_failure_at": self.last_auth_failure_at or None,
         }
 
     def record_error(self, message: str, cooldown_s: int = 60) -> None:
@@ -84,6 +207,7 @@ class AccountState:
         self.error_count = 0
         self.cooldown_until = 0.0
         self.requests_count += 1
+        self.mark_refresh_success()
 
 
 class AccountPool:
@@ -149,6 +273,9 @@ class AccountPool:
             )
             state.last_refresh = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
+        # Compute initial health
+        state.update_health()
+
         return state
 
     # ── Credential (re)loading ────────────────────────────────────
@@ -160,12 +287,23 @@ class AccountPool:
             return False
         new_state = self._try_load_account(account_id, acct.creds_file)
         if new_state:
-            # Preserve runtime counters
+            # Preserve runtime counters and auth state
             new_state.error_count = acct.error_count
             new_state.cooldown_until = acct.cooldown_until
             new_state.requests_count = acct.requests_count
             new_state.last_error = acct.last_error
             new_state.enabled = acct.enabled
+            # Preserve auth state across reloads
+            new_state.last_auth_error = acct.last_auth_error
+            new_state.last_refresh_success = acct.last_refresh_success
+            new_state.health_status = acct.health_status
+            new_state.status_reason = acct.status_reason
+            new_state.status_reason_params = acct.status_reason_params
+            new_state.last_auth_check_at = acct.last_auth_check_at
+            new_state.last_auth_success_at = acct.last_auth_success_at
+            new_state.last_auth_failure_at = acct.last_auth_failure_at
+            # Re-compute health after restoring state (may change if token got updated on disk)
+            new_state.update_health()
             self.accounts[account_id] = new_state
             return True
         return False
@@ -206,6 +344,7 @@ class AccountPool:
             return False
         acct.enabled = True
         self._explicitly_disabled.discard(account_id)
+        acct.update_health()
         return True
 
     def disable_account(self, account_id: str) -> bool:
@@ -214,6 +353,7 @@ class AccountPool:
             return False
         acct.enabled = False
         self._explicitly_disabled.add(account_id)
+        acct.update_health()
         return True
 
     def get_account(self, account_id: str) -> AccountState | None:
@@ -223,8 +363,27 @@ class AccountPool:
         return list(self.accounts.values())
 
     def save_creds(self, account_id: str, raw: dict[str, Any]) -> None:
-        """Persist updated credentials to disk."""
+        """Persist updated credentials to disk.
+
+        Gracefully handles permission errors (e.g., when CREDS_DIR is a
+        host bind mount with restrictive ownership). On write failure,
+        logs a warning and continues with in-memory-only state.
+        """
         acct = self.accounts.get(account_id)
         if not acct:
             return
-        acct.creds_file.write_text(json.dumps(raw, indent=2))
+        import logging
+        try:
+            acct.creds_file.write_text(json.dumps(raw, indent=2))
+        except PermissionError:
+            logging.getLogger("gx_qwen2api").warning(
+                "Cannot write %s — permission denied. "
+                "Token updated in-memory only; changes will not persist across restarts.",
+                acct.creds_file,
+            )
+        except OSError as exc:
+            logging.getLogger("gx_qwen2api").warning(
+                "Cannot write %s — %s. "
+                "Token updated in-memory only.",
+                acct.creds_file, exc,
+            )

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,7 +9,7 @@
   --bg: #0d1117; --surface: #161b22; --border: #30363d;
   --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
   --green: #3fb950; --yellow: #d29922; --red: #f85149;
-  --orange: #db6d28;
+  --orange: #db6d28; --purple: #bc8cff;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; padding: 16px; }
@@ -21,34 +21,80 @@ a { color: var(--accent); }
 /* Top bar */
 .topbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .topbar button { cursor: pointer; }
-.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
-.badge-ok { background: #23863622; color: var(--green); border: 1px solid #23863666; }
-.badge-warn { background: #d2992222; color: var(--yellow); border: 1px solid #d2992266; }
-.badge-err { background: #f8514922; color: var(--red); border: 1px solid #f8514966; }
+.topbar-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+/* Login status */
+.login-status { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--muted); }
+.login-status .dot { background: var(--green); box-shadow: 0 0 4px var(--green); }
+
+/* Language switcher */
+.lang-switch { display: flex; gap: 4px; }
+.lang-btn { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 0.75rem; cursor: pointer; }
+.lang-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Badges */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+.badge-valid { background: #23863622; color: var(--green); border: 1px solid #23863666; }
+.badge-expiring { background: #d2992222; color: var(--yellow); border: 1px solid #d2992266; }
+.badge-error { background: #f8514922; color: var(--red); border: 1px solid #f8514966; }
 .badge-info { background: #1f6feb22; color: var(--accent); border: 1px solid #1f6feb66; }
+.badge-disabled { background: #484f5822; color: var(--muted); border: 1px solid #484f5866; }
+.badge-cooldown { background: #db6d2822; color: var(--orange); border: 1px solid #db6d2866; }
 
 /* Account cards */
-.accounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.accounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+@media (max-width: 480px) {
+  .accounts { grid-template-columns: 1fr; }
+  .topbar { flex-direction: column; align-items: stretch; }
+  .topbar-right { margin-left: 0; justify-content: space-between; flex-wrap: wrap; }
+  .card-actions { flex-direction: column; }
+  .card-actions .btn { width: 100%; justify-content: center; }
+  .meta-row { flex-wrap: wrap; }
+  .card h3 { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .card .meta { font-size: 0.75rem; }
+  .health-bar { gap: 8px; }
+  .health-item { min-width: 70px; padding: 8px 10px; }
+  .health-item .val { font-size: 1.2rem; }
+}
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; position: relative; }
-.card.disabled { opacity: 0.5; }
-.card h3 { font-size: 0.95rem; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+.card.status-auth-error { border-color: var(--red); box-shadow: 0 0 8px rgba(248, 81, 73, 0.2); }
+.card.status-expired { border-color: var(--orange); }
+.card.status-disabled { opacity: 0.5; }
+.card h3 { font-size: 0.95rem; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px; }
 .card .meta { font-size: 0.8rem; color: var(--muted); }
-.card .meta span { margin-right: 10px; }
+.card .meta-row { display: flex; gap: 8px; margin: 3px 0; flex-wrap: wrap; align-items: baseline; }
+.card .meta-label { color: var(--muted); min-width: 70px; flex-shrink: 0; }
+.card .meta-value { color: var(--text); }
 .card-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 
 /* Buttons */
-.btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 0.78rem; cursor: pointer; transition: background 0.15s; }
-.btn:hover { background: var(--border); }
-.btn-sm { padding: 2px 8px; font-size: 0.72rem; }
+.btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 0.8rem; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+.btn:hover:not(:disabled) { background: var(--border); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-sm { padding: 4px 10px; font-size: 0.75rem; }
+.btn-xs { padding: 2px 6px; font-size: 0.7rem; }
 .btn-green { border-color: #23863666; color: var(--green); }
-.btn-green:hover { background: #23863633; }
+.btn-green:hover:not(:disabled) { background: #23863633; }
 .btn-red { border-color: #f8514966; color: var(--red); }
-.btn-red:hover { background: #f8514933; }
+.btn-red:hover:not(:disabled) { background: #f8514933; }
 .btn-blue { border-color: #1f6feb66; color: var(--accent); }
-.btn-blue:hover { background: #1f6feb33; }
+.btn-blue:hover:not(:disabled) { background: #1f6feb33; }
+.btn-orange { border-color: #db6d2866; color: var(--orange); }
+.btn-orange:hover:not(:disabled) { background: #db6d2833; }
+.btn-purple { border-color: #bc8cff66; color: var(--purple); }
+.btn-purple:hover:not(:disabled) { background: #bc8cff33; }
+.btn-danger-outline { border-style: dashed; border-width: 2px; }
+
+/* Timestamps area */
+.timestamps { background: #161b2288; border: 1px solid #30363d44; border-radius: 4px; padding: 6px 8px; margin-top: 4px; font-size: 0.72rem; }
+.timestamps .ts-row { display: flex; gap: 4px; margin: 2px 0; }
+.timestamps .ts-label { color: var(--muted); min-width: 55px; }
+.timestamps .ts-value { color: var(--text); }
+.timestamps .ts-value.good { color: var(--green); }
+.timestamps .ts-value.bad { color: var(--red); }
 
 /* Logs */
-.logs-box { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; max-height: 420px; overflow-y: auto; padding: 8px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.78rem; }
+.logs-box { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; max-height: 420px; overflow-y: auto; padding: 8px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.75rem; }
 .log-entry { padding: 3px 0; border-bottom: 1px solid #21262d; word-break: break-all; }
 .log-entry:last-child { border-bottom: none; }
 .log-ts { color: var(--muted); }
@@ -57,72 +103,355 @@ a { color: var(--accent); }
 .log-detail { color: var(--text); }
 
 /* Status dot */
-.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
-.dot-green { background: var(--green); }
-.dot-yellow { background: var(--yellow); }
-.dot-red { background: var(--red); }
-.dot-gray { background: var(--muted); }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; flex-shrink: 0; }
+.dot-valid { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.dot-expiring { background: var(--yellow); }
+.dot-expired { background: var(--orange); }
+.dot-error { background: var(--red); box-shadow: 0 0 4px var(--red); }
+.dot-cooldown { background: var(--muted); animation: pulse 1.5s infinite; }
+.dot-disabled { background: var(--muted); }
+.dot-no-token { background: var(--muted); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 /* Health bar */
-.health-bar { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-.health-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; min-width: 120px; text-align: center; }
-.health-item .val { font-size: 1.4rem; font-weight: 700; }
-.health-item .label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; }
+.health-bar { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.health-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; min-width: 110px; text-align: center; flex: 1; }
+.health-item .val { font-size: 1.5rem; font-weight: 700; }
+.health-item .val.green { color: var(--green); }
+.health-item .val.red { color: var(--red); }
+.health-item .label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
 
 /* Refresh interval */
 .auto-refresh { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); }
 .auto-refresh select { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; }
 
-/* Modal for errors */
-.error-detail { font-size: 0.75rem; color: var(--red); margin-top: 4px; word-break: break-all; max-height: 60px; overflow: hidden; }
+/* Error detail */
+.error-detail { font-size: 0.75rem; color: var(--red); margin-top: 4px; word-break: break-all; background: #f8514911; padding: 6px; border-radius: 4px; border-left: 3px solid var(--red); max-height: 80px; overflow-y: auto; }
+
+/* Upload section */
+.upload-section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 12px 0; }
+.upload-hint { font-size: 0.8rem; color: var(--muted); margin: 8px 0; }
+.upload-dropzone { border: 2px dashed var(--border); border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.2s; }
+.upload-dropzone:hover, .upload-dropzone.drag-over { border-color: var(--accent); background: #1f6feb11; }
+.upload-dropzone.drag-over { border-style: solid; }
+.upload-dropzone p { color: var(--muted); margin: 4px 0; font-size: 0.8rem; }
+.upload-dropzone .icon { font-size: 2rem; }
+
+/* Toast */
+#toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 18px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-size: 0.85rem; z-index: 999; transition: opacity 0.3s; max-width: 90vw; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+#toast.success { border-color: var(--green); }
+#toast.error { border-color: var(--red); }
+#toast.warning { border-color: var(--yellow); }
+
+/* Verification result */
+.verify-result { margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 0.8rem; }
+.verify-result.success { background: #23863622; border: 1px solid #23863666; color: var(--green); }
+.verify-result.failed { background: #f8514922; border: 1px solid #f8514966; color: var(--red); }
+.verify-result.unknown { background: #1f6feb22; border: 1px solid #1f6feb66; color: var(--accent); }
+
+/* Confirm dialog */
+.confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.confirm-dialog { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 24px; max-width: 400px; width: 90%; }
+.confirm-dialog h3 { margin-bottom: 12px; color: var(--red); }
+.confirm-dialog p { margin-bottom: 16px; color: var(--text); font-size: 0.9rem; }
+.confirm-dialog .btn-group { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* Cooldown countdown */
+.cooldown-timer { color: var(--orange); font-weight: 600; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>gxQwen2api — Dashboard</h1>
+  <h1 data-i18n="title">gxQwen2api — 管理面板</h1>
 
   <div class="topbar">
-    <button class="btn btn-blue" onclick="loadAccounts()">Refresh Now</button>
-    <button class="btn" onclick="loadLogs()">Refresh Logs</button>
-    <button class="btn btn-green" onclick="doAction('/admin/api/scan', 'Scanned')">Scan Creds Dir</button>
-    <button class="btn" onclick="doAction('/admin/api/reload-all', 'Reloaded all')">Reload All</button>
-    <button class="btn btn-blue" onclick="document.getElementById('credFile').click()">Upload Credential</button>
-    <input type="file" id="credFile" accept=".json" style="display:none" onchange="uploadCredential()">
-    <button class="btn btn-red btn-sm" onclick="doAction('/admin/api/logs/clear', 'Cleared')">Clear Logs</button>
-    <div class="auto-refresh">
-      Auto-refresh:
-      <select id="interval" onchange="toggleAuto()">
-        <option value="0">Off</option>
-        <option value="5000">5s</option>
-        <option value="15000" selected>15s</option>
-        <option value="30000">30s</option>
-        <option value="60000">60s</option>
-      </select>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-blue" onclick="loadAccounts()" data-i18n="btn_refresh_now">🔄 立即刷新</button>
+      <button class="btn" onclick="loadLogs()" data-i18n="btn_refresh_logs">📋 刷新日志</button>
+      <button class="btn btn-green" onclick="doAction('/admin/api/scan', 'scan')" data-i18n="btn_scan">📁 扫描凭证目录</button>
+      <button class="btn" onclick="doAction('/admin/api/reload-all', 'reload_all')" data-i18n="btn_reload_all">🔄 重载全部</button>
+    </div>
+    <div class="topbar-right">
+      <div id="loginStatus" class="login-status" style="display:none">
+        <span class="dot"></span>
+        <span data-i18n="logged_in">已登录</span>
+        <button class="btn btn-xs btn-red" onclick="doLogout()" data-i18n="btn_logout">退出</button>
+      </div>
+      <button class="btn btn-blue" onclick="document.getElementById('credFile').click()" data-i18n="btn_upload">📤 上传凭证</button>
+      <button class="btn btn-red btn-sm btn-danger-outline" onclick="confirmClearLogs()" data-i18n="btn_clear_logs">🗑️ 清空日志</button>
+      <div class="lang-switch">
+        <button class="lang-btn" data-lang="zh" onclick="setLanguage('zh')">中文</button>
+        <button class="lang-btn" data-lang="en" onclick="setLanguage('en')">EN</button>
+      </div>
+      <div class="auto-refresh">
+        <span data-i18n="auto_refresh_label">自动刷新:</span>
+        <select id="interval" onchange="toggleAuto()">
+          <option value="0" data-i18n="auto_refresh_off">关闭</option>
+          <option value="5000">5s</option>
+          <option value="15000" selected>15s</option>
+          <option value="30000">30s</option>
+          <option value="60000">60s</option>
+        </select>
+      </div>
     </div>
   </div>
 
   <div class="health-bar" id="healthBar">
-    <div class="health-item"><div class="val" id="hTotal">-</div><div class="label">Accounts</div></div>
-    <div class="health-item"><div class="val" id="hHealthy">-</div><div class="label">Healthy</div></div>
-    <div class="health-item"><div class="val" id="hRequests">-</div><div class="label">Requests</div></div>
-    <div class="health-item"><div class="val" id="hUptime">-</div><div class="label">Uptime</div></div>
+    <div class="health-item"><div class="val" id="hTotal">-</div><div class="label" data-i18n="health_accounts">账号总数</div></div>
+    <div class="health-item"><div class="val green" id="hHealthy">-</div><div class="label" data-i18n="health_healthy">健康账号</div></div>
+    <div class="health-item"><div class="val" id="hRequests">-</div><div class="label" data-i18n="health_requests">总请求数</div></div>
+    <div class="health-item"><div class="val" id="hUptime">-</div><div class="label" data-i18n="health_uptime">运行时间</div></div>
   </div>
 
-  <h2>Accounts</h2>
+  <h2 data-i18n="section_accounts">账号列表</h2>
   <div class="accounts" id="accounts">
-    <div style="color:var(--muted)">Loading...</div>
+    <div style="color:var(--muted)" data-i18n="loading">加载中...</div>
   </div>
 
-  <h2>Recent Events <span id="logCount" style="font-size:0.75rem;color:var(--muted)"></span></h2>
+  <div class="upload-section">
+    <h3 style="margin-bottom:8px" data-i18n="upload_title">📤 上传凭证</h3>
+    <input type="file" id="credFile" accept=".json" style="display:none" onchange="uploadCredential()">
+    <div class="upload-dropzone" id="dropzone" onclick="document.getElementById('credFile').click()">
+      <div class="icon">📂</div>
+      <p data-i18n="upload_drop">点击选择或拖放 JSON 文件到此处</p>
+      <p class="upload-hint" data-i18n="upload_hint">文件名将作为账号 ID</p>
+    </div>
+    <div id="uploadResult" style="margin-top:8px"></div>
+  </div>
+
+  <h2><span data-i18n="section_logs">事件日志</span> <span id="logCount" style="font-size:0.75rem;color:var(--muted)"></span></h2>
   <div class="logs-box" id="logsBox">
-    <div style="color:var(--muted)">Loading logs...</div>
+    <div style="color:var(--muted)" data-i18n="logs_loading">加载日志中...</div>
   </div>
 </div>
 
 <script>
 const API = '';
 
-// Auto-redirect to login when 403
+// ── i18n ────────────────────────────────────────────────────────
+const i18n = {
+  zh: {
+    title: 'gxQwen2api — 管理面板',
+    btn_refresh_now: '🔄 立即刷新',
+    btn_refresh_logs: '📋 刷新日志',
+    btn_scan: '📁 扫描凭证目录',
+    btn_reload_all: '🔄 重载全部',
+    btn_upload: '📤 上传凭证',
+    btn_clear_logs: '🗑️ 清空日志',
+    logged_in: '已登录',
+    btn_logout: '退出',
+    auto_refresh_label: '自动刷新:',
+    auto_refresh_off: '关闭',
+    health_accounts: '账号总数',
+    health_healthy: '健康账号',
+    health_requests: '总请求数',
+    health_uptime: '运行时间',
+    section_accounts: '账号列表',
+    section_logs: '事件日志',
+    loading: '加载中...',
+    upload_title: '📤 上传凭证',
+    upload_drop: '点击选择或拖放 JSON 文件到此处',
+    upload_hint: '文件名将作为账号 ID',
+    logs_loading: '加载日志中...',
+    no_accounts: '未找到账号。请确保凭证目录中有 JSON 文件。',
+    no_logs: '暂无事件日志。',
+    status_valid: '有效',
+    status_expiring_soon: '即将过期',
+    status_expired: '已过期',
+    status_auth_error: '认证错误',
+    status_refresh_failed: '刷新失败',
+    status_cooldown: '冷却中',
+    status_disabled: '已禁用',
+    status_no_token: '无 Token',
+    status_unknown: '未知',
+    enabled: '已启用',
+    disabled: '已禁用',
+    meta_health: '健康状态',
+    meta_reason: '状态说明',
+    meta_expires: '剩余时间',
+    meta_requests: '请求数',
+    meta_errors: '错误数',
+    meta_last_refresh: '上次刷新',
+    meta_timestamps: '关键时间',
+    meta_reason: '状态说明',
+    ts_last_check: '最近校验',
+    ts_last_success: '校验成功',
+    ts_last_failure: '校验失败',
+    btn_enable: '✅ 启用',
+    btn_disable: '⛔ 禁用',
+    btn_force_refresh: '🔄 强制刷新',
+    btn_reload_file: '📄 重载文件',
+    btn_verify: '🔍 校验',
+    verifying: '校验中...',
+    verify_success: '✅ Token 有效，账号可用',
+    verify_fail_token: '❌ Token 无效或认证失败',
+    verify_fail_network: '❌ 网络错误，无法连接 API',
+    verify_fail_endpoint: '❌ API 端点异常',
+    verify_fail_permission: '❌ 权限不足（HTTP 401/403）',
+    verify_error: '⚠️ 校验出错',
+    scan: '扫描完成',
+    reload_all: '重载全部完成',
+    enable: '已启用',
+    disable: '已禁用',
+    refresh: '刷新完成',
+    reload: '重载完成',
+    verify: '校验完成',
+    upload_success: '✅ 上传成功: {id} ({action})',
+    upload_new: '新账号',
+    upload_overwrite: '覆盖',
+    upload_memory_only: '内存中（未持久化）',
+    upload_error: '上传失败: {error}',
+    upload_invalid_filename: '文件名无效，必须是 .json 格式',
+    upload_too_large: '文件过大（最大 64KB）',
+    upload_not_json: '不是有效的 JSON 文件',
+    upload_missing_keys: '缺少必要字段',
+    confirm_clear_logs: '确定要清空所有日志吗？此操作不可撤销。',
+    confirm_disable: '确定要禁用账号 {id} 吗？',
+    confirm: '确认',
+    cancel: '取消',
+    minutes: '分钟',
+    hours: '小时',
+    days: '天',
+    expired_text: '已过期',
+    no_expiry: '无过期时间',
+    never: '从未',
+    ago: '前',
+    uploading: '上传中...',
+    // Reason keys (status_reason i18n)
+    reason_valid: 'Token 有效',
+    reason_expiring_soon: 'Token 即将过期（约 {minutes} 分钟后）',
+    reason_expired: 'Token 已过期',
+    reason_auth_error: '认证错误：{error}',
+    reason_refresh_failed: 'Token 刷新失败：{error}',
+    reason_cooldown: '冷却中（剩余 {seconds} 秒）',
+    reason_disabled: '账号已禁用',
+    reason_no_token: '未加载 Access Token',
+  },
+  en: {
+    title: 'gxQwen2api — Dashboard',
+    btn_refresh_now: '🔄 Refresh Now',
+    btn_refresh_logs: '📋 Refresh Logs',
+    btn_scan: '📁 Scan Creds Dir',
+    btn_reload_all: '🔄 Reload All',
+    btn_upload: '📤 Upload Credential',
+    btn_clear_logs: '🗑️ Clear Logs',
+    logged_in: 'Logged in',
+    btn_logout: 'Logout',
+    auto_refresh_label: 'Auto-refresh:',
+    auto_refresh_off: 'Off',
+    health_accounts: 'Total Accounts',
+    health_healthy: 'Healthy',
+    health_requests: 'Total Requests',
+    health_uptime: 'Uptime',
+    section_accounts: 'Accounts',
+    section_logs: 'Event Logs',
+    loading: 'Loading...',
+    upload_title: '📤 Upload Credential',
+    upload_drop: 'Click to select or drag a JSON file here',
+    upload_hint: 'Filename becomes account ID',
+    logs_loading: 'Loading logs...',
+    no_accounts: 'No accounts found. Make sure JSON files exist in the creds directory.',
+    no_logs: 'No events yet.',
+    status_valid: 'Valid',
+    status_expiring_soon: 'Expiring Soon',
+    status_expired: 'Expired',
+    status_auth_error: 'Auth Error',
+    status_refresh_failed: 'Refresh Failed',
+    status_cooldown: 'Cooldown',
+    status_disabled: 'Disabled',
+    status_no_token: 'No Token',
+    status_unknown: 'Unknown',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    meta_health: 'Health',
+    meta_reason: 'Reason',
+    meta_expires: 'Expires In',
+    meta_requests: 'Requests',
+    meta_errors: 'Errors',
+    meta_last_refresh: 'Last Refresh',
+    meta_timestamps: 'Key Times',
+    meta_reason: 'Reason',
+    ts_last_check: 'Last Check',
+    ts_last_success: 'Last Success',
+    ts_last_failure: 'Last Failure',
+    btn_enable: '✅ Enable',
+    btn_disable: '⛔ Disable',
+    btn_force_refresh: '🔄 Force Refresh',
+    btn_reload_file: '📄 Reload File',
+    btn_verify: '🔍 Verify',
+    verifying: 'Verifying...',
+    verify_success: '✅ Token is valid, account is usable',
+    verify_fail_token: '❌ Token is invalid or authentication failed',
+    verify_fail_network: '❌ Network error, cannot reach API',
+    verify_fail_endpoint: '❌ API endpoint error',
+    verify_fail_permission: '❌ Permission denied (HTTP 401/403)',
+    verify_error: '⚠️ Verification error',
+    scan: 'Scan complete',
+    reload_all: 'Reload all complete',
+    enable: 'Enabled',
+    disable: 'Disabled',
+    refresh: 'Refresh complete',
+    reload: 'Reload complete',
+    verify: 'Verify complete',
+    upload_success: '✅ Uploaded: {id} ({action})',
+    upload_new: 'new',
+    upload_overwrite: 'overwritten',
+    upload_memory_only: 'in-memory only',
+    upload_error: 'Upload error: {error}',
+    upload_invalid_filename: 'Invalid filename, must be .json format',
+    upload_too_large: 'File too large (max 64KB)',
+    upload_not_json: 'Not a valid JSON file',
+    upload_missing_keys: 'Missing required fields',
+    confirm_clear_logs: 'Are you sure you want to clear all logs? This cannot be undone.',
+    confirm_disable: 'Are you sure you want to disable account {id}?',
+    confirm: 'Confirm',
+    cancel: 'Cancel',
+    minutes: 'min',
+    hours: 'h',
+    days: 'd',
+    expired_text: 'Expired',
+    no_expiry: 'No expiry',
+    never: 'Never',
+    ago: 'ago',
+    uploading: 'Uploading...',
+    // Reason keys (status_reason i18n)
+    reason_valid: 'Token is valid',
+    reason_expiring_soon: 'Token expiring soon (~{minutes} min)',
+    reason_expired: 'Token has expired',
+    reason_auth_error: 'Auth error: {error}',
+    reason_refresh_failed: 'Token refresh failed: {error}',
+    reason_cooldown: 'In cooldown ({seconds}s remaining)',
+    reason_disabled: 'Account disabled',
+    reason_no_token: 'No access token loaded',
+  }
+};
+
+let currentLang = localStorage.getItem('gx_admin_lang') || 'zh';
+
+function t(key) {
+  return i18n[currentLang]?.[key] || i18n.zh[key] || key;
+}
+
+function setLanguage(lang) {
+  currentLang = lang;
+  localStorage.setItem('gx_admin_lang', lang);
+  applyTranslations();
+  loadAccounts();
+}
+
+function applyTranslations() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    const text = t(key);
+    if (text) el.textContent = text;
+  });
+  document.querySelectorAll('.lang-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.lang === currentLang);
+  });
+  document.documentElement.lang = currentLang;
+}
+
+// ── Fetch wrapper with 403 redirect ─────────────────────────────
 const origFetch = window.fetch;
 window.fetch = async function (...args) {
   const res = await origFetch.apply(this, args);
@@ -132,98 +461,259 @@ window.fetch = async function (...args) {
   return res;
 };
 
+// ── Formatting helpers ──────────────────────────────────────────
 function fmtTs(epochMs) {
   if (!epochMs) return '-';
   const d = new Date(epochMs);
-  return d.toLocaleString();
+  return d.toLocaleString(currentLang === 'zh' ? 'zh-CN' : 'en-US');
 }
 
-function fmtDuration(sec) {
-  if (sec < 60) return Math.floor(sec) + 's';
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+function fmtExpires(minutes) {
+  if (minutes == null || minutes < 0) return t('expired_text');
+  if (minutes === 0 && minutes !== null) return t('no_expiry');
+  if (minutes < 60) return `${Math.floor(minutes)} ${t('minutes')}`;
+  if (minutes < 1440) return `${(minutes / 60).toFixed(1)} ${t('hours')}`;
+  return `${(minutes / 1440).toFixed(1)} ${t('days')}`;
+}
+
+function fmtUptime(seconds) {
+  if (!seconds || seconds < 0) return '-';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function fmtTimestamp(ts) {
+  if (!ts) return t('never');
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 60000) return `${Math.floor(diff / 1000)}s ${t('ago') || '前'}`;
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ${t('ago') || '前'}`;
+  return d.toLocaleTimeString(currentLang === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
 function statusBadge(status) {
-  const map = {
-    valid: '<span class="badge badge-ok">Valid</span>',
-    healthy: '<span class="badge badge-ok">Valid</span>',
-    expiring_soon: '<span class="badge badge-warn">Expiring Soon</span>',
-    expired: '<span class="badge badge-err">Expired</span>',
-    no_token: '<span class="badge badge-warn">No Token</span>',
-    unknown: '<span class="badge badge-info">Unknown</span>',
+  const statusKey = (status || 'unknown').toLowerCase();
+  const labels = {
+    valid: t('status_valid'),
+    healthy: t('status_valid'),
+    expiring_soon: t('status_expiring_soon'),
+    expired: t('status_expired'),
+    auth_error: t('status_auth_error'),
+    refresh_failed: t('status_refresh_failed'),
+    cooldown: t('status_cooldown'),
+    disabled: t('status_disabled'),
+    no_token: t('status_no_token'),
+    unknown: t('status_unknown'),
   };
-  return map[status] || `<span class="badge badge-info">${status}</span>`;
+  const classes = {
+    valid: 'badge-valid', healthy: 'badge-valid',
+    expiring_soon: 'badge-expiring', expired: 'badge-error',
+    auth_error: 'badge-error', refresh_failed: 'badge-error',
+    cooldown: 'badge-cooldown', disabled: 'badge-disabled',
+    no_token: 'badge-info', unknown: 'badge-info',
+  };
+  const label = labels[statusKey] || statusKey;
+  const cls = classes[statusKey] || 'badge-info';
+  return `<span class="badge ${cls}">${label}</span>`;
 }
 
-function dot(status) {
-  if (status === 'valid' || status === 'healthy') return '<span class="dot dot-green"></span>';
-  if (status === 'expiring_soon') return '<span class="dot dot-yellow"></span>';
-  if (status === 'expired' || status === 'no_token') return '<span class="dot dot-red"></span>';
-  return '<span class="dot dot-gray"></span>';
+function statusDot(status) {
+  const s = (status || 'unknown').toLowerCase();
+  const cls = {
+    valid: 'dot-valid', healthy: 'dot-valid',
+    expiring_soon: 'dot-expiring', expired: 'dot-expired',
+    auth_error: 'dot-error', refresh_failed: 'dot-error',
+    cooldown: 'dot-cooldown', disabled: 'dot-disabled',
+    no_token: 'dot-no-token', unknown: 'dot-disabled',
+  };
+  return `<span class="dot ${cls[s] || 'dot-disabled'}"></span>`;
 }
 
+function cardStatusClass(status) {
+  const s = (status || 'unknown').toLowerCase();
+  if (s === 'auth_error' || s === 'refresh_failed') return 'status-auth-error';
+  if (s === 'expired') return 'status-expired';
+  if (s === 'disabled') return 'status-disabled';
+  return '';
+}
+
+function renderStatusReason(key, params) {
+  if (!key) return '';
+  params = params || {};
+  let text = t(key) || key;
+  for (const [k, v] of Object.entries(params)) {
+    text = text.replace(`{${k}}`, v);
+  }
+  return `<div class="meta-row"><span class="meta-label">${t('meta_reason')}</span><span class="meta-value" style="font-size:0.75rem">${escHtml(text)}</span></div>`;
+}
+
+function renderTimestamps(a) {
+  const checkTime = a.last_auth_check_at;
+  const successTime = a.last_auth_success_at;
+  const failureTime = a.last_auth_failure_at;
+  if (!checkTime && !successTime && !failureTime) return '';
+
+  const rows = [];
+  if (checkTime) {
+    rows.push(`<div class="ts-row"><span class="ts-label">${t('ts_last_check')}</span><span class="ts-value">${fmtTimestamp(checkTime)}</span></div>`);
+  }
+  if (successTime) {
+    rows.push(`<div class="ts-row"><span class="ts-label">${t('ts_last_success')}</span><span class="ts-value good">${fmtTimestamp(successTime)}</span></div>`);
+  }
+  if (failureTime) {
+    rows.push(`<div class="ts-row"><span class="ts-label">${t('ts_last_failure')}</span><span class="ts-value bad">${fmtTimestamp(failureTime)}</span></div>`);
+  }
+  return `<div class="timestamps"><div style="color:var(--muted);font-size:0.7rem;margin-bottom:2px">${t('meta_timestamps')}</div>${rows.join('')}</div>`;
+}
+
+// ── Main load ───────────────────────────────────────────────────
 async function loadAccounts() {
-  const [accRes, logsRes] = await Promise.all([
+  const [accRes, logsRes, healthRes] = await Promise.all([
     fetch(API + '/admin/api/accounts'),
     fetch(API + '/admin/api/logs?limit=100'),
+    fetch(API + '/health'),
   ]);
   const accounts = await accRes.json();
   const logs = await logsRes.json();
-  renderAccounts(accounts);
+  const health = healthRes.ok ? await healthRes.json() : null;
+  renderAccounts(accounts, health);
   renderLogs(logs);
+  startCooldownTimers(accounts);
 }
 
-function renderAccounts(accounts) {
-  const el = document.getElementById('accounts');
-  if (!accounts.length) { el.innerHTML = '<div style="color:var(--muted)">No accounts found. Make sure JSON files exist in the creds directory.</div>'; return; }
+async function loadLogs() {
+  try {
+    const res = await fetch(API + '/admin/api/logs?limit=100');
+    const logs = await res.json();
+    renderLogs(logs);
+  } catch (e) {
+    showToast(`Failed to load logs: ${e.message}`, 'error');
+  }
+}
 
-  // Update health bar
-  const healthy = accounts.filter(a => a.enabled && (a.token_status === 'valid' || a.token_status === 'healthy')).length;
+function fmtUptimeDisplay(seconds) {
+  if (!seconds || seconds < 0) return '-';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function renderAccounts(accounts, health) {
+  const el = document.getElementById('accounts');
+  if (!accounts.length) { el.innerHTML = `<div style="color:var(--muted)">${t('no_accounts')}</div>`; return; }
+
+  // Update health bar — same logic as /health endpoint
+  const healthy = accounts.filter(a => {
+    const hs = (a.health_status || a.token_status || '').toLowerCase();
+    return a.enabled && (hs === 'valid' || hs === 'healthy' || hs === 'expiring_soon');
+  }).length;
+  const totalReqs = accounts.reduce((sum, a) => sum + (a.requests_count || 0), 0);
   document.getElementById('hTotal').textContent = accounts.length;
   document.getElementById('hHealthy').textContent = healthy;
+  document.getElementById('hRequests').textContent = totalReqs;
+
+  if (health && health.uptime_seconds != null) {
+    document.getElementById('hUptime').textContent = fmtUptimeDisplay(health.uptime_seconds);
+  }
 
   el.innerHTML = accounts.map(a => {
-    const enabledClass = a.enabled ? '' : 'disabled';
-    const tokenExpiry = a.expires_in_minutes != null ? `${Math.max(0, a.expires_in_minutes).toFixed(1)} min left` : '-';
-    const cooldownBadge = a.in_cooldown ? '<span class="badge badge-err">Cooldown</span>' : '';
-    const errDetail = a.last_error ? `<div class="error-detail">${escHtml(a.last_error)}</div>` : '';
+    const healthStatus = a.health_status || a.token_status || 'unknown';
+    const statusClass = cardStatusClass(healthStatus);
+    const tokenExpiry = a.expires_in_minutes != null ? fmtExpires(Math.max(0, a.expires_in_minutes)) : t('no_expiry');
+    const statusReason = renderStatusReason(a.status_reason, a.status_reason_params);
+    const errDetail = a.last_auth_error || a.last_error ? `<div class="error-detail">${escHtml(a.last_auth_error || a.last_error)}</div>` : '';
+    const verifyDivId = `verify-${a.account_id}`;
+    const timestampsHtml = renderTimestamps(a);
+    const cooldownId = a.in_cooldown ? `cooldown-${a.account_id}` : '';
+
     return `
-      <div class="card ${enabledClass}">
+      <div class="card ${statusClass}" data-account="${escAttr(a.account_id)}" ${a.cooldown_until ? `data-cooldown="${a.cooldown_until}"` : ''}>
         <h3>
-          <span>${dot(a.token_status)}${escHtml(a.account_id)}</span>
-          <span>${a.enabled ? '<span class="badge badge-ok">Enabled</span>' : '<span class="badge badge-err">Disabled</span>'}</span>
+          <span>${statusDot(healthStatus)}${escHtml(a.account_id)}</span>
+          <span>
+            ${a.enabled ? '<span class="badge badge-valid">' + t('enabled') + '</span>' : '<span class="badge badge-disabled">' + t('disabled') + '</span>'}
+            ${a.in_cooldown ? `<span class="badge badge-cooldown" id="${cooldownId}">⏱️ <span class="cooldown-timer" data-until="${Math.ceil(a.cooldown_until)}"></span></span>` : ''}
+          </span>
         </h3>
         <div class="meta">
-          <span>Token: ${statusBadge(a.token_status)}</span>
-          <span>${cooldownBadge}</span><br>
-          <span>Expires: ${tokenExpiry}</span>
-          <span>Requests: ${a.requests_count}</span><br>
-          <span>File: ${escHtml(a.creds_file)}</span><br>
-          <span>Last refresh: ${a.last_refresh || '-'}</span>
-          <span>Errors: ${a.error_count}</span>
+          <div class="meta-row">
+            <span class="meta-label">${t('meta_health')}</span>
+            <span class="meta-value">${statusBadge(healthStatus)}</span>
+          </div>
+          ${statusReason}
+          <div class="meta-row">
+            <span class="meta-label">${t('meta_expires')}</span>
+            <span class="meta-value">${tokenExpiry}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">${t('meta_requests')}</span>
+            <span class="meta-value">${a.requests_count || 0}</span>
+            <span class="meta-label">${t('meta_errors')}</span>
+            <span class="meta-value">${a.error_count || 0}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">${t('meta_last_refresh')}</span>
+            <span class="meta-value">${a.last_refresh || '-'}</span>
+          </div>
+          ${timestampsHtml}
           ${errDetail}
+          <div id="${verifyDivId}"></div>
         </div>
         <div class="card-actions">
           ${a.enabled
-            ? `<button class="btn btn-sm btn-red" onclick="doAccount('disable','${escAttr(a.account_id)}')">Disable</button>`
-            : `<button class="btn btn-sm btn-green" onclick="doAccount('enable','${escAttr(a.account_id)}')">Enable</button>`}
-          <button class="btn btn-sm btn-blue" onclick="doAccount('refresh','${escAttr(a.account_id)}')">Force Refresh</button>
-          <button class="btn btn-sm" onclick="doAccount('reload','${escAttr(a.account_id)}')">Reload File</button>
+            ? `<button class="btn btn-sm btn-red" onclick="confirmDisable('${escAttr(a.account_id)}')">${t('btn_disable')}</button>`
+            : `<button class="btn btn-sm btn-green" onclick="doAccount('enable','${escAttr(a.account_id)}')">${t('btn_enable')}</button>`}
+          <button class="btn btn-sm btn-purple" onclick="doVerify('${escAttr(a.account_id)}')">${t('btn_verify')}</button>
+          <button class="btn btn-sm btn-blue" onclick="doAccount('refresh','${escAttr(a.account_id)}')">${t('btn_force_refresh')}</button>
+          <button class="btn btn-sm" onclick="doAccount('reload','${escAttr(a.account_id)}')">${t('btn_reload_file')}</button>
         </div>
       </div>`;
   }).join('');
 }
 
+// ── Cooldown live countdown ─────────────────────────────────────
+let cooldownTimers = [];
+function startCooldownTimers(accounts) {
+  // Clear old timers
+  cooldownTimers.forEach(id => clearInterval(id));
+  cooldownTimers = [];
+
+  accounts.forEach(a => {
+    if (!a.in_cooldown || !a.cooldown_until) return;
+    const el = document.querySelector(`.cooldown-timer[data-until="${Math.ceil(a.cooldown_until)}"]`);
+    if (!el) return;
+    const until = a.cooldown_until * 1000; // to ms
+
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+      el.textContent = `${remaining}s`;
+      if (remaining <= 0) {
+        clearInterval(intervalId);
+        el.textContent = '0s';
+      }
+    };
+    tick();
+    const intervalId = setInterval(tick, 1000);
+    cooldownTimers.push(intervalId);
+  });
+}
+
 function renderLogs(logs) {
   const el = document.getElementById('logsBox');
-  document.getElementById('logCount').textContent = `(${logs.length} entries)`;
-  if (!logs.length) { el.innerHTML = '<div style="color:var(--muted)">No events yet.</div>'; return; }
+  document.getElementById('logCount').textContent = `(${logs.length})`;
+  if (!logs.length) { el.innerHTML = `<div style="color:var(--muted)">${t('no_logs')}</div>`; return; }
   const eventColors = {
     request: 'var(--accent)', response: 'var(--green)', error: 'var(--red)',
     refresh_start: 'var(--yellow)', refresh_ok: 'var(--green)', refresh_fail: 'var(--red)',
-    server: 'var(--muted)',
+    server: 'var(--muted)', upload: 'var(--purple)',
   };
   el.innerHTML = logs.reverse().map(l => {
     const color = eventColors[l.event] || 'var(--text)';
@@ -237,6 +727,7 @@ function renderLogs(logs) {
   el.scrollTop = el.scrollHeight;
 }
 
+// ── Actions ─────────────────────────────────────────────────────
 async function doAccount(action, accountId) {
   const endpoints = {
     enable: `/admin/api/enable/${accountId}`,
@@ -244,18 +735,68 @@ async function doAccount(action, accountId) {
     refresh: `/admin/api/refresh/${accountId}`,
     reload: `/admin/api/reload?account_id=${accountId}`,
   };
-  await doAction(endpoints[action], `${action} ${accountId}`);
+  const labels = {
+    enable: 'enable', disable: 'disable', refresh: 'refresh', reload: 'reload',
+  };
+  await doAction(endpoints[action], labels[action]);
 }
 
-async function doAction(url, label) {
+async function doAction(url, labelKey) {
   try {
     const res = await fetch(url, { method: 'POST' });
     const data = await res.json();
-    showToast(`${label} — ${data.status || 'ok'}`);
+    showToast(`${t(labelKey)} — ${data.status || 'ok'}`, 'success');
     await loadAccounts();
   } catch (e) {
-    showToast(`${label} — error: ${e.message}`, true);
+    showToast(`${labelKey} — error: ${e.message}`, 'error');
   }
+}
+
+async function doVerify(accountId) {
+  const resultDiv = document.getElementById(`verify-${accountId}`);
+  if (!resultDiv) return;
+  resultDiv.innerHTML = `<div style="color:var(--muted);font-size:0.8rem">⏳ ${t('verifying')}</div>`;
+
+  try {
+    const res = await fetch(`/admin/api/verify/${accountId}`, { method: 'POST' });
+    const data = await res.json();
+
+    if (data.valid === true) {
+      resultDiv.innerHTML = `<div class="verify-result success">${t('verify_success')}</div>`;
+    } else if (data.valid === false) {
+      // Determine error type from response
+      let msg = t('verify_fail_token');
+      if (data.error_type === 'network') msg = t('verify_fail_network');
+      else if (data.error_type === 'endpoint') msg = t('verify_fail_endpoint');
+      else if (data.error_type === 'permission') msg = t('verify_fail_permission');
+      resultDiv.innerHTML = `<div class="verify-result failed">${msg}<br><small>${escHtml(data.detail || '')}</small></div>`;
+    } else {
+      resultDiv.innerHTML = `<div class="verify-result unknown">${t('verify_error')}: ${escHtml(data.detail || '')}</div>`;
+    }
+
+    await loadAccounts();
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="verify-result failed">${t('verify_error')}: ${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── Drag & Drop upload ──────────────────────────────────────────
+function initDropZone() {
+  const dz = document.getElementById('dropzone');
+  if (!dz) return;
+
+  ['dragenter', 'dragover'].forEach(evt => {
+    dz.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); dz.classList.add('drag-over'); });
+  });
+  ['dragleave', 'drop'].forEach(evt => {
+    dz.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); dz.classList.remove('drag-over'); });
+  });
+  dz.addEventListener('drop', e => {
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      handleUploadFile(files[0]);
+    }
+  });
 }
 
 async function uploadCredential() {
@@ -263,34 +804,121 @@ async function uploadCredential() {
   const file = input.files[0];
   if (!file) return;
   input.value = '';
+  handleUploadFile(file);
+}
+
+async function handleUploadFile(file) {
   const fd = new FormData();
   fd.append('file', file);
+
+  const resultDiv = document.getElementById('uploadResult');
+  resultDiv.innerHTML = `<div style="color:var(--muted)">⏳ ${t('uploading') || 'Uploading...'}</div>`;
+
   try {
     const res = await fetch(API + '/admin/api/upload', { method: 'POST', body: fd });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Upload failed');
-    showToast(`Uploaded: ${data.account_id} (${data.action})`);
+    if (!res.ok) {
+      let errMsg = data.detail || 'Upload failed';
+      if (typeof errMsg === 'string') {
+        if (errMsg.includes('Invalid filename')) errMsg = t('upload_invalid_filename');
+        else if (errMsg.includes('File too large')) errMsg = t('upload_too_large');
+        else if (errMsg.includes('valid JSON')) errMsg = t('upload_not_json');
+        else if (errMsg.includes('Missing required')) errMsg = t('upload_missing_keys');
+      }
+      throw new Error(errMsg);
+    }
+    const actionText = data.action === 'new' ? t('upload_new')
+      : data.action === 'overwritten' ? t('upload_overwrite')
+      : t('upload_memory_only');
+    const successMsg = t('upload_success').replace('{id}', data.account_id).replace('{action}', actionText);
+    showToast(successMsg, 'success');
+    resultDiv.innerHTML = `<div style="color:var(--green);font-size:0.8rem">✅ ${successMsg}</div>`;
+    setTimeout(() => { resultDiv.innerHTML = ''; }, 5000);
     await loadAccounts();
   } catch (e) {
-    showToast(`Upload error: ${e.message}`, true);
+    showToast(t('upload_error').replace('{error}', e.message), 'error');
+    resultDiv.innerHTML = `<div style="color:var(--red);font-size:0.8rem">❌ ${escHtml(e.message)}</div>`;
+    setTimeout(() => { resultDiv.innerHTML = ''; }, 8000);
   }
 }
 
-function showToast(msg, isError) {
-  let t = document.getElementById('toast');
-  if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t);
-    Object.assign(t.style, { position:'fixed', bottom:'20px', right:'20px', padding:'10px 18px', borderRadius:'8px', background:'var(--surface)', border:'1px solid var(--border)', color:'var(--text)', fontSize:'0.85rem', zIndex:'999', transition:'opacity 0.3s', maxWidth:'400px' }); }
-  t.textContent = msg;
-  t.style.borderColor = isError ? 'var(--red)' : 'var(--green)';
-  t.style.opacity = '1';
-  clearTimeout(t._timer);
-  t._timer = setTimeout(() => { t.style.opacity = '0'; }, 3000);
+// ── Auth status (injected by backend) ───────────────────────────
+/* __ADMIN_AUTH_INJECT__ */
+// Fallback for when the page is served directly as a static file
+// (no backend injection). Do NOT use const here to avoid duplicate
+// declaration when the backend has already injected the value.
+if (typeof ADMIN_AUTH_REQUIRED === 'undefined') {
+  var ADMIN_AUTH_REQUIRED = false;
 }
 
-function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-function escAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+function showLoginStatus() {
+  if (ADMIN_AUTH_REQUIRED) {
+    const el = document.getElementById('loginStatus');
+    if (el) el.style.display = 'flex';
+  }
+}
 
-// Auto-refresh
+async function doLogout() {
+  try {
+    await fetch('/admin/logout', { method: 'POST' });
+    window.location.href = '/admin/login';
+  } catch (e) {
+    showToast(`Logout error: ${e.message}`, 'error');
+  }
+}
+
+// ── Confirm dialogs ─────────────────────────────────────────────
+function confirmClearLogs() {
+  showConfirmDialog(t('confirm_clear_logs'), async () => {
+    await doAction('/admin/api/logs/clear', 'clear_logs');
+  });
+}
+
+function confirmDisable(accountId) {
+  const msg = t('confirm_disable').replace('{id}', accountId);
+  showConfirmDialog(msg, async () => {
+    await doAccount('disable', accountId);
+  });
+}
+
+function showConfirmDialog(message, onConfirm) {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.innerHTML = `
+    <div class="confirm-dialog">
+      <h3>⚠️ ${t('confirm')}</h3>
+      <p>${escHtml(message)}</p>
+      <div class="btn-group">
+        <button class="btn" id="confirm-cancel">${t('cancel')}</button>
+        <button class="btn btn-red" id="confirm-ok">${t('confirm')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#confirm-cancel').onclick = () => overlay.remove();
+  overlay.querySelector('#confirm-ok').onclick = async () => {
+    overlay.remove();
+    await onConfirm();
+  };
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+
+// ── Toast ───────────────────────────────────────────────────────
+function showToast(msg, type = 'success') {
+  let t_el = document.getElementById('toast');
+  if (!t_el) { t_el = document.createElement('div'); t_el.id = 'toast'; document.body.appendChild(t_el); }
+  t_el.textContent = msg;
+  t_el.className = type; // success, error, warning
+  t_el.style.opacity = '1';
+  clearTimeout(t_el._timer);
+  t_el._timer = setTimeout(() => { t_el.style.opacity = '0'; }, 4000);
+}
+
+// ── Utils ───────────────────────────────────────────────────────
+function escHtml(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function escAttr(s) { return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+// ── Auto-refresh ────────────────────────────────────────────────
 let autoTimer = null;
 function toggleAuto() {
   const ms = parseInt(document.getElementById('interval').value);
@@ -298,9 +926,12 @@ function toggleAuto() {
   if (ms > 0) autoTimer = setInterval(loadAccounts, ms);
 }
 
-// Initial load
+// ── Init ────────────────────────────────────────────────────────
+applyTranslations();
+showLoginStatus();
 loadAccounts();
 toggleAuto();
+initDropZone();
 </script>
 </body>
 </html>

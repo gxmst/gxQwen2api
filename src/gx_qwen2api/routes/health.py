@@ -18,7 +18,11 @@ router = APIRouter()
 async def health(request: Request) -> dict[str, Any]:
     pool: AccountPool = request.app.state.pool
     accounts = pool.all_accounts()
-    healthy = sum(1 for a in accounts if a.enabled and a.token_valid)
+    # Use the new health_status field for accurate health counting
+    healthy = sum(
+        1 for a in accounts
+        if a.enabled and a.health_status.value in ("valid", "expiring_soon")
+    )
     total = len(accounts)
 
     return {

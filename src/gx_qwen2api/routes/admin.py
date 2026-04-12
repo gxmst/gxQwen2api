@@ -56,9 +56,23 @@ def _set_admin_cookie(response: Response) -> None:
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = "") -> HTMLResponse:
+    # Detect language from Accept-Language header
+    accept_lang = request.headers.get("accept-language", "")
+    lang = "zh" if "zh" in accept_lang else "en"
+    
+    titles = {"zh": "管理员登录", "en": "Admin Login"}
+    placeholders = {"zh": "密码", "en": "Password"}
+    submit_btns = {"zh": "登录", "en": "Sign in"}
+    error_msgs = {"zh": "密码错误", "en": "Wrong password"}
+    
+    title = titles[lang]
+    placeholder = placeholders[lang]
+    submit_btn = submit_btns[lang]
+    error_text = error_msgs[lang] if error else ""
+    
     return HTMLResponse(
         content=f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Admin Login</title>
+<html lang="{lang}"><head><meta charset="UTF-8"><title>{title}</title>
 <style>
 body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
 form{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:24px;width:320px}}
@@ -68,10 +82,10 @@ button:hover{{background:#2ea043}}
 .err{{color:#f85149;font-size:0.85rem;margin-bottom:8px}}
 </style></head><body>
 <form method="post" action="/admin/login">
-<h2 style="margin:0 0 4px">Admin Login</h2>
-{"<div class=err>" + html.escape(error) + "</div>" if error else ""}
-<input type="password" name="p" placeholder="Password" autofocus>
-<button type="submit">Sign in</button>
+<h2 style="margin:0 0 4px">{title}</h2>
+{"<div class=err>" + html.escape(error_text) + "</div>" if error_text else ""}
+<input type="password" name="p" placeholder="{placeholder}" autofocus>
+<button type="submit">{submit_btn}</button>
 </form></body></html>""",
     )
 
@@ -100,7 +114,15 @@ async def admin_page(request: Request) -> HTMLResponse:
     if not settings.admin_enabled:
         raise HTTPException(status_code=404, detail="Admin disabled")
     tpl = Path(__file__).resolve().parent.parent / "static" / "admin.html"
-    return HTMLResponse(content=tpl.read_text(encoding="utf-8"))
+    html_content = tpl.read_text(encoding="utf-8")
+    # Inject whether admin password is set so the frontend can show logout UI
+    # This avoids needing to read the HttpOnly cookie from JS
+    is_auth_required = "true" if settings.admin_password else "false"
+    html_content = html_content.replace(
+        '/* __ADMIN_AUTH_INJECT__ */',
+        f'const ADMIN_AUTH_REQUIRED = {is_auth_required};',
+    )
+    return HTMLResponse(content=html_content)
 
 
 # ── API endpoints ────────────────────────────────────────────────
@@ -176,6 +198,96 @@ async def api_disable(request: Request, account_id: str) -> dict[str, Any]:
     return {"status": "ok" if ok else "not_found", "account_id": account_id}
 
 
+@router.post("/api/verify/{account_id}")
+async def api_verify(request: Request, account_id: str) -> dict[str, Any]:
+    """Verify if an account's token is actually valid by checking with the API."""
+    _check_admin(request)
+    pool: AccountPool = request.app.state.pool
+    auth: AuthManager = request.app.state.auth
+    client = request.app.state.http_client
+
+    acct = pool.get_account(account_id)
+    if not acct:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+
+    if not acct.access_token:
+        return {
+            "status": "failed",
+            "account_id": account_id,
+            "detail": "No access token loaded",
+            "valid": False,
+            "error_type": "no_token",
+        }
+
+    # Try a simple API call to verify
+    import time
+    try:
+        test_resp = await client.get(
+            f"{auth.get_api_endpoint(acct)}/models",
+            headers={
+                "authorization": f"Bearer {acct.access_token}",
+                "content-type": "application/json",
+            }
+        )
+
+        acct.last_auth_check_at = time.time()
+
+        if test_resp.status_code == 200:
+            acct.clear_auth_error()
+            acct.last_auth_success_at = time.time()
+            acct.update_health()
+            return {
+                "status": "ok",
+                "account_id": account_id,
+                "detail": "Token is valid",
+                "valid": True,
+                "error_type": None,
+            }
+        elif test_resp.status_code in (401, 403):
+            error_body = test_resp.text[:300]
+            acct.mark_auth_error(f"Verify failed: HTTP {test_resp.status_code}")
+            acct.last_auth_failure_at = time.time()
+            return {
+                "status": "failed",
+                "account_id": account_id,
+                "detail": f"Authentication failed (HTTP {test_resp.status_code})",
+                "valid": False,
+                "error_type": "permission",
+                "error": error_body,
+            }
+        elif test_resp.status_code >= 500:
+            return {
+                "status": "failed",
+                "account_id": account_id,
+                "detail": f"API endpoint error (HTTP {test_resp.status_code})",
+                "valid": False,
+                "error_type": "endpoint",
+            }
+        else:
+            return {
+                "status": "unknown",
+                "account_id": account_id,
+                "detail": f"Unexpected response (HTTP {test_resp.status_code})",
+                "valid": None,
+                "error_type": None,
+            }
+    except Exception as e:
+        acct.last_auth_check_at = time.time()
+        acct.last_auth_failure_at = time.time()
+        err_str = str(e).lower()
+        if any(x in err_str for x in ["connect", "timeout", "refused", "unreachable", "dns"]):
+            error_type = "network"
+        else:
+            error_type = "network"
+        return {
+            "status": "error",
+            "account_id": account_id,
+            "detail": f"Verification error: {str(e)[:200]}",
+            "valid": False,
+            "error_type": error_type,
+        }
+
+
 @router.post("/api/logs/clear")
 async def api_clear_logs(request: Request) -> dict[str, str]:
     _check_admin(request)
@@ -239,35 +351,78 @@ async def api_upload(request: Request, file: UploadFile) -> dict[str, Any]:
         import time
         data["expiry_date"] = int(time.time() * 1000) + 7 * 24 * 3600 * 1000  # 7 days
 
-    # 6. Save to creds_dir
+    # 6. Try to save to creds_dir — gracefully handle permission errors
     pool: AccountPool = request.app.state.pool
     target = settings.creds_dir / name
     exists = target.exists()
-    target.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    write_succeeded = True
+    try:
+        target.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except PermissionError:
+        write_succeeded = False
+        logging.getLogger("gx_qwen2api").warning(
+            "Upload: cannot write %s (permission denied). "
+            "Credential will be registered in-memory only.",
+            target,
+        )
+    except OSError as exc:
+        write_succeeded = False
+        logging.getLogger("gx_qwen2api").warning(
+            "Upload: cannot write %s (%s). "
+            "Credential will be registered in-memory only.",
+            target, exc,
+        )
 
     account_id = Path(name).stem
 
-    # 7. Register in pool
-    state = pool._try_load_account(account_id, target)
+    # 7. Register in pool (even if disk write failed)
+    if write_succeeded and target.exists():
+        state = pool._try_load_account(account_id, target)
+    else:
+        # Create an in-memory account from the uploaded data
+        from pathlib import Path as _Path
+        import hashlib
+        rt = data.get("refresh_token", "")
+        rt_hash = hashlib.sha256(rt.encode()).hexdigest()[:8] if rt else ""
+        from ..account_pool import AccountState
+        state = AccountState(
+            account_id=account_id,
+            creds_file=target,
+            enabled=True,
+            access_token=data.get("access_token", ""),
+            expiry_date=data.get("expiry_date", 0),
+            refresh_token_hash=rt_hash,
+            _raw_creds=data,
+        )
+        state.update_health()
+
     if state:
         pool.accounts[account_id] = state
     else:
         pool.scan()
 
+    action = "overwritten" if exists else "new"
+    if not write_succeeded:
+        action = "memory_only"
+
     logging.getLogger("gx_qwen2api").info(
-        "Uploaded credential %s (%s)", account_id, "overwrite" if exists else "new"
+        "Uploaded credential %s (%s)%s",
+        account_id, action,
+        "" if write_succeeded else " — in-memory only",
     )
 
     event_logger._emit(
         logging.INFO, "upload",
         {
             "account_id": account_id,
-            "detail": f"{'Overwritten' if exists else 'New'} credential: {account_id}",
+            "detail": f"{'Overwritten' if exists else 'New'} credential: {account_id}"
+            + ("" if write_succeeded else " (in-memory only)"),
         },
     )
 
     return {
         "status": "ok",
         "account_id": account_id,
-        "action": "overwritten" if exists else "new",
+        "action": action,
+        "persisted": write_succeeded,
     }

@@ -2,7 +2,7 @@
 # Stage 1: build
 # ---
 
-FROM python:3.12-bookworm-slim AS builder
+FROM python:3.12-slim-bookworm AS builder
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0
 WORKDIR /app
 

@@ -1,0 +1,215 @@
+"""Qwen OAuth credential management with detailed refresh logging."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from typing import Any
+
+import httpx
+
+from .account_pool import AccountPool, AccountState
+from .config import settings
+from .headers import USER_AGENT
+from .event_logger import event_logger
+
+
+class AuthManager:
+    """Manages Qwen OAuth credentials across multiple accounts."""
+
+    def __init__(self, pool: AccountPool) -> None:
+        self.pool = pool
+        self._refresh_locks: dict[str, bool] = {}
+        self._refresh_events: dict[str, asyncio.Event] = {}
+
+    async def refresh_token(
+        self, acct: AccountState, client: httpx.AsyncClient
+    ) -> bool:
+        """Refresh a single account's access token. Returns True on success."""
+        raw = acct._raw_creds
+        if not raw or not raw.get("refresh_token"):
+            acct.record_error("No refresh token available")
+            event_logger.refresh_failed(
+                account_id=acct.account_id,
+                reason="no_refresh_token",
+                url=settings.qwen_oauth_token_url,
+            )
+            return False
+
+        url = settings.qwen_oauth_token_url
+        t0 = time.monotonic()
+        event_logger.refresh_started(account_id=acct.account_id, url=url)
+
+        try:
+            resp = await client.post(
+                url,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": raw["refresh_token"],
+                    "client_id": settings.qwen_oauth_client_id,
+                },
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                    "User-Agent": USER_AGENT,
+                },
+            )
+        except TimeoutError:
+            elapsed = time.monotonic() - t0
+            acct.record_error(f"Timeout after {elapsed:.2f}s")
+            event_logger.refresh_failed(
+                account_id=acct.account_id,
+                reason="timeout",
+                url=url,
+                elapsed_ms=elapsed * 1000,
+            )
+            return False
+        except Exception as exc:
+            elapsed = time.monotonic() - t0
+            acct.record_error(f"Request error: {exc}")
+            event_logger.refresh_failed(
+                account_id=acct.account_id,
+                reason="request_error",
+                url=url,
+                elapsed_ms=elapsed * 1000,
+                error=str(exc)[:300],
+            )
+            return False
+
+        elapsed_ms = (time.monotonic() - t0) * 1000
+
+        if resp.status_code != 200:
+            body_preview = resp.text[:500]
+            error_msg = (
+                f"status={resp.status_code}, "
+                f"content_type={resp.headers.get('content-type', '<missing>')}, "
+                f"body={body_preview!r}"
+            )
+            acct.record_error(error_msg)
+            event_logger.refresh_failed(
+                account_id=acct.account_id,
+                reason="non_200",
+                url=url,
+                status_code=resp.status_code,
+                content_type=resp.headers.get("content-type", "<missing>"),
+                elapsed_ms=elapsed_ms,
+                body_preview=body_preview,
+            )
+            return False
+
+        # Parse response
+        try:
+            token_data: dict[str, Any] = resp.json()
+        except json.JSONDecodeError:
+            body_preview = resp.text[:500]
+            acct.record_error(
+                f"invalid JSON: status={resp.status_code}, "
+                f"content_type={resp.headers.get('content-type', '<missing>')}, "
+                f"body={body_preview!r}"
+            )
+            event_logger.refresh_failed(
+                account_id=acct.account_id,
+                reason="invalid_json",
+                url=url,
+                status_code=resp.status_code,
+                content_type=resp.headers.get("content-type", "<missing>"),
+                elapsed_ms=elapsed_ms,
+                body_preview=body_preview,
+            )
+            return False
+
+        # Update account state
+        new_expiry = int(time.time() * 1000) + int(token_data.get("expires_in", 0)) * 1000
+        new_rt = token_data.get("refresh_token", raw.get("refresh_token", ""))
+        import hashlib
+        acct.access_token = token_data["access_token"]
+        acct.expiry_date = new_expiry
+        acct.refresh_token_hash = (
+            hashlib.sha256(new_rt.encode()).hexdigest()[:8] if new_rt else ""
+        )
+        acct._raw_creds = {**raw, "refresh_token": new_rt}
+        acct.last_error = ""
+
+        # Persist to disk
+        raw["access_token"] = token_data["access_token"]
+        raw["refresh_token"] = new_rt
+        raw["expiry_date"] = new_expiry
+        raw["token_type"] = token_data.get("token_type", raw.get("token_type", ""))
+        raw["resource_url"] = token_data.get("resource_url", raw.get("resource_url", ""))
+        self.pool.save_creds(acct.account_id, raw)
+
+        import datetime
+        dt = datetime.datetime.fromtimestamp(
+            new_expiry / 1000, tz=datetime.timezone.utc
+        )
+        acct.last_refresh = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        acct.record_success()
+
+        event_logger.refresh_succeeded(
+            account_id=acct.account_id,
+            elapsed_ms=elapsed_ms,
+            expires_at=dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        )
+        return True
+
+    async def get_valid_token(self, client: httpx.AsyncClient) -> tuple[str, str]:
+        """Return (access_token, account_id) for a healthy account.
+
+        Tries round-robin selection, refreshes if expired.
+        Concurrent callers for the same account wait for the in-flight refresh.
+        """
+        for _ in range(len(self.pool.accounts)):
+            acct = self.pool.select_account()
+            if not acct:
+                break
+
+            # Check file mtime for hot-reload
+            self.pool.check_mtime_and_reload(acct.account_id)
+            acct = self.pool.get_account(acct.account_id) or acct
+
+            if acct.token_valid:
+                return acct.access_token, acct.account_id
+
+            # Need refresh — acquire per-account lock
+            aid = acct.account_id
+            if aid not in self._refresh_events:
+                self._refresh_events[aid] = asyncio.Event()
+                self._refresh_events[aid].clear()
+
+            if not self._refresh_locks.get(aid):
+                # We are the first — do the refresh
+                self._refresh_locks[aid] = True
+                try:
+                    ok = await self.refresh_token(acct, client)
+                    if ok and acct.token_valid:
+                        return acct.access_token, acct.account_id
+                finally:
+                    self._refresh_locks[aid] = False
+                    self._refresh_events[aid].set()
+                    # Clear the event so the next refresh cycle is clean
+                    del self._refresh_events[aid]
+            else:
+                # Another coroutine is refreshing — wait for it
+                try:
+                    await asyncio.wait_for(self._refresh_events[aid].wait(), timeout=30)
+                except TimeoutError:
+                    pass
+                # Re-read state after wait
+                acct = self.pool.get_account(aid) or acct
+                if acct.token_valid:
+                    return acct.access_token, acct.account_id
+
+        raise RuntimeError(
+            "No valid token available. All accounts are expired, in cooldown, or disabled."
+        )
+
+    def get_api_endpoint(self, acct: AccountState | None) -> str:
+        if acct and acct._raw_creds and acct._raw_creds.get("resource_url"):
+            endpoint = acct._raw_creds["resource_url"]
+            if not endpoint.startswith("http"):
+                endpoint = f"https://{endpoint}"
+            if not endpoint.endswith("/v1"):
+                endpoint = endpoint.rstrip("/") + "/v1"
+            return endpoint
+        return settings.qwen_api_base

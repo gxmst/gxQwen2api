@@ -5,11 +5,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..account_pool import AccountPool
 from ..event_logger import event_logger
-from .admin import _check_admin
+from .admin import get_admin_user
 
 router = APIRouter()
 
@@ -43,9 +43,8 @@ async def healthz(request: Request) -> str:
 
 
 @router.get("/debug/auth")
-async def debug_auth(request: Request) -> dict[str, Any]:
+async def debug_auth(request: Request, _=Depends(get_admin_user)) -> dict[str, Any]:
     """Return detailed state of all accounts."""
-    _check_admin(request)
     pool: AccountPool = request.app.state.pool
     return {
         "creds_dir": str(pool.accounts and next(iter(pool.accounts.values())).creds_file.parent if pool.accounts else ""),
@@ -54,7 +53,6 @@ async def debug_auth(request: Request) -> dict[str, Any]:
 
 
 @router.get("/debug/logs")
-async def debug_logs(request: Request, limit: int = 100) -> list[dict[str, Any]]:
+async def debug_logs(request: Request, limit: int = 100, _=Depends(get_admin_user)) -> list[dict[str, Any]]:
     """Return recent event log entries."""
-    _check_admin(request)
     return event_logger.get_logs(limit=limit)

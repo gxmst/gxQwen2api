@@ -109,7 +109,7 @@ a { color: var(--accent); }
 .dot-expiring { background: var(--yellow); }
 .dot-expired { background: var(--orange); }
 .dot-error { background: var(--red); box-shadow: 0 0 4px var(--red); }
-.dot-cooldown { background: var(--muted); animation: pulse 1.5s infinite; }
+.dot-cooldown, .dot-rate-limited { background: var(--orange); animation: pulse 1.5s infinite; }
 .dot-disabled { background: var(--muted); }
 .dot-no-token { background: var(--muted); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
@@ -287,6 +287,7 @@ const i18n = {
     status_auth_error: '认证错误',
     status_refresh_failed: '刷新失败',
     status_cooldown: '冷却中',
+    status_rate_limited: '触发限流',
     status_disabled: '已禁用',
     status_no_token: '无 Token',
     status_unknown: '未知',
@@ -326,6 +327,7 @@ const i18n = {
     verify: '校验完成',
     upload_success: '✅ 上传成功: {id} ({action})',
     upload_new: '新账号',
+    upload_renamed: '自动重命名',
     upload_overwrite: '覆盖',
     upload_memory_only: '内存中（未持久化）',
     upload_error: '上传失败: {error}',
@@ -351,7 +353,8 @@ const i18n = {
     reason_expired: 'Token 已过期',
     reason_auth_error: '认证错误：{error}',
     reason_refresh_failed: 'Token 刷新失败：{error}',
-    reason_cooldown: '冷却中（剩余 {seconds} 秒）',
+    reason_cooldown: '正在冷却（剩余 {seconds} 秒）',
+    reason_rate_limited: '限流冷却（剩余 {seconds} 秒）：{error}',
     reason_disabled: '账号已禁用',
     reason_no_token: '未加载 Access Token',
   },
@@ -401,6 +404,7 @@ const i18n = {
     status_auth_error: 'Auth Error',
     status_refresh_failed: 'Refresh Failed',
     status_cooldown: 'Cooldown',
+    status_rate_limited: 'Rate Limited',
     status_disabled: 'Disabled',
     status_no_token: 'No Token',
     status_unknown: 'Unknown',
@@ -440,6 +444,7 @@ const i18n = {
     verify: 'Verify complete',
     upload_success: '✅ Uploaded: {id} ({action})',
     upload_new: 'new',
+    upload_renamed: 'auto-renamed',
     upload_overwrite: 'overwritten',
     upload_memory_only: 'in-memory only',
     upload_error: 'Upload error: {error}',
@@ -466,6 +471,7 @@ const i18n = {
     reason_auth_error: 'Auth error: {error}',
     reason_refresh_failed: 'Token refresh failed: {error}',
     reason_cooldown: 'In cooldown ({seconds}s remaining)',
+    reason_rate_limited: 'Rate limited ({seconds}s remaining): {error}',
     reason_disabled: 'Account disabled',
     reason_no_token: 'No access token loaded',
   }
@@ -551,6 +557,7 @@ function statusBadge(status) {
     auth_error: t('status_auth_error'),
     refresh_failed: t('status_refresh_failed'),
     cooldown: t('status_cooldown'),
+    rate_limited: t('status_rate_limited'),
     disabled: t('status_disabled'),
     no_token: t('status_no_token'),
     unknown: t('status_unknown'),
@@ -559,7 +566,8 @@ function statusBadge(status) {
     valid: 'badge-valid', healthy: 'badge-valid',
     expiring_soon: 'badge-expiring', expired: 'badge-error',
     auth_error: 'badge-error', refresh_failed: 'badge-error',
-    cooldown: 'badge-cooldown', disabled: 'badge-disabled',
+    cooldown: 'badge-cooldown', rate_limited: 'badge-cooldown',
+    disabled: 'badge-disabled',
     no_token: 'badge-info', unknown: 'badge-info',
   };
   const label = labels[statusKey] || statusKey;
@@ -573,7 +581,8 @@ function statusDot(status) {
     valid: 'dot-valid', healthy: 'dot-valid',
     expiring_soon: 'dot-expiring', expired: 'dot-expired',
     auth_error: 'dot-error', refresh_failed: 'dot-error',
-    cooldown: 'dot-cooldown', disabled: 'dot-disabled',
+    cooldown: 'dot-cooldown', rate_limited: 'dot-rate-limited',
+    disabled: 'dot-disabled',
     no_token: 'dot-no-token', unknown: 'dot-disabled',
   };
   return `<span class="dot ${cls[s] || 'dot-disabled'}"></span>`;
@@ -956,9 +965,7 @@ async function handleUploadFile(file) {
       }
       throw new Error(errMsg);
     }
-    const actionText = data.action === 'new' ? t('upload_new')
-      : data.action === 'overwritten' ? t('upload_overwrite')
-      : t('upload_memory_only');
+    const actionText = t('upload_' + (data.action || 'new'));
     const successMsg = t('upload_success').replace('{id}', data.account_id).replace('{action}', actionText);
     showToast(successMsg, 'success');
     resultDiv.innerHTML = `<div style="color:var(--green);font-size:0.8rem">✅ ${successMsg}</div>`;

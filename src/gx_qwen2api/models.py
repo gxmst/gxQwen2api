@@ -1,7 +1,24 @@
 """Qwen model definitions, aliases, and token limits."""
 
-from typing import Any
+from typing import Any, Optional
+from pydantic import BaseModel, Field
 from .config import settings
+
+class ChatCompletionRequest(BaseModel):
+    model: str
+    messages: list[dict[str, Any]]
+    stream: bool = False
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    repetition_penalty: Optional[float] = None
+    tools: Optional[list[dict[str, Any]]] = None
+    tool_choice: Optional[Any] = None
+    enable_thinking: Optional[bool] = None
+    thinking_budget: Optional[int] = None
+    metadata: Optional[dict[str, Any]] = None
+    stream_options: Optional[dict[str, Any]] = None
 
 
 MODEL_ALIASES: dict[str, str] = {

@@ -9,9 +9,11 @@ set -e
 # If token persistence fails due to permissions, the app gracefully
 # falls back to in-memory-only mode (logs a warning, continues running).
 if [ -n "$CREDS_DIR" ] && [ -d "$CREDS_DIR" ]; then
-  # Make sure the directory is at least readable (non-recursive)
-  if [ ! -r "$CREDS_DIR" ]; then
-    echo "WARNING: CREDS_DIR ($CREDS_DIR) is not readable. Token loading may fail." >&2
+  # Automatically fix permissions if the directory is not writable by the target user.
+  # This is especially helpful for first-run with named volumes or when volume permissions drift.
+  if ! gosu nonroot [ -w "$CREDS_DIR" ]; then
+    echo "Fixing permissions for $CREDS_DIR..."
+    chown -R nonroot:nonroot "$CREDS_DIR"
   fi
 fi
 

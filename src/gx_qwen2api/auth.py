@@ -179,29 +179,35 @@ class AuthManager:
                 
             return await self.refresh_token(acct, client)
 
-    async def get_valid_token(self, client: httpx.AsyncClient) -> tuple[str, str]:
+    async def get_valid_token(
+        self, client: httpx.AsyncClient, exclude_ids: set[str] | None = None
+    ) -> tuple[str, str]:
         """Return (access_token, account_id) for a healthy account.
 
-        Tries round-robin selection, refreshes if expired.
+        Tries selection, refreshes if expired.
         Concurrent callers for the same account wait for the in-flight refresh.
         """
+        tried = set(exclude_ids or [])
         for _ in range(len(self.pool.accounts)):
-            acct = self.pool.select_account()
+            acct = self.pool.select_account(exclude_ids=tried)
             if not acct:
                 break
+            
+            account_id = acct.account_id
+            tried.add(account_id)
 
             # Check file mtime for hot-reload
-            self.pool.check_mtime_and_reload(acct.account_id)
-            acct = self.pool.get_account(acct.account_id) or acct
+            self.pool.check_mtime_and_reload(account_id)
+            acct = self.pool.get_account(account_id) or acct
 
             if acct.token_valid:
-                return acct.access_token, acct.account_id
+                return acct.access_token, account_id
 
             # Need refresh — use coordinated refresh to avoid races
             ok = await self.coordinated_refresh(acct, client)
-            acct = self.pool.get_account(acct.account_id) or acct
+            acct = self.pool.get_account(account_id) or acct
             if ok and acct.token_valid:
-                return acct.access_token, acct.account_id
+                return acct.access_token, account_id
 
         raise RuntimeError(
             "No valid token available. All accounts are expired, in cooldown, or disabled."

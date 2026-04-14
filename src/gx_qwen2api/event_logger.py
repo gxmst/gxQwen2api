@@ -106,6 +106,40 @@ class EventLogger:
             },
         )
 
+    def rate_limit_hit(
+        self,
+        account_id: str,
+        retry_after: int | None = None,
+        error: str = "",
+    ) -> None:
+        detail = f"Rate limit hit!"
+        if retry_after:
+            detail += f" Retry-After: {retry_after}s"
+        if error:
+            detail += f" — {error[:50]}"
+        self._emit(
+            logging.WARNING, "rate_limit_hit",
+            {
+                "account_id": account_id,
+                "retry_after": retry_after,
+                "detail": detail,
+            },
+        )
+
+    def rate_limit_failover(
+        self,
+        old_account_id: str,
+        new_account_id: str,
+    ) -> None:
+        self._emit(
+            logging.INFO, "rate_limit_failover",
+            {
+                "account_id": new_account_id,
+                "old_account_id": old_account_id,
+                "detail": f"Failover: {old_account_id} → {new_account_id} due to rate limit",
+            },
+        )
+
     # ── Token refresh ─────────────────────────────────────────────
 
     def refresh_started(self, account_id: str, url: str) -> None:

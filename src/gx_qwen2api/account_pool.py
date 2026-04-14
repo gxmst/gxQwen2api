@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import random
 import time
 import datetime
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ class AccountHealthStatus(str, Enum):
     VALID = "valid"
     EXPIRING_SOON = "expiring_soon"
     EXPIRED = "expired"
+    RATE_LIMITED = "rate_limited"
     COOLDOWN = "cooldown"
     REFRESH_FAILED = "refresh_failed"
     AUTH_ERROR = "auth_error"
@@ -49,6 +51,9 @@ class AccountState:
     last_refresh: str = ""
     last_error: str = ""
     requests_count: int = 0
+    # Rate limiting
+    rate_limit_count: int = 0
+    last_rate_limit_at: float = 0.0
     # Detailed health status
     health_status: AccountHealthStatus = AccountHealthStatus.UNKNOWN
     status_reason: str = ""  # i18n key (prefixed with 'reason_')
@@ -107,9 +112,13 @@ class AccountState:
 
         if self.is_cooldown:
             remaining = max(0, int(self.cooldown_until - time.time()))
-            self.status_reason = "reason_cooldown"
+            # If rate_limited status is current, use that reason
+            if self.health_status == AccountHealthStatus.RATE_LIMITED:
+                self.status_reason = "reason_rate_limited"
+            else:
+                self.status_reason = "reason_cooldown"
             self.status_reason_params = {"seconds": remaining}
-            return AccountHealthStatus.COOLDOWN
+            return self.health_status if self.health_status in (AccountHealthStatus.RATE_LIMITED, AccountHealthStatus.COOLDOWN) else AccountHealthStatus.COOLDOWN
 
         if not self.access_token or not self.expiry_date:
             self.status_reason = "reason_no_token"
@@ -172,6 +181,17 @@ class AccountState:
         self.clear_auth_error()
         self.update_health()
 
+    def mark_rate_limited(self, error_message: str = "", cooldown_s: int = 60) -> None:
+        """Mark account as rate limited."""
+        self.rate_limit_count += 1
+        self.last_rate_limit_at = time.time()
+        self.cooldown_until = time.time() + cooldown_s
+        self.health_status = AccountHealthStatus.RATE_LIMITED
+        self.status_reason = "reason_rate_limited"
+        self.status_reason_params = {"seconds": int(cooldown_s), "error": error_message[:100]}
+        if error_message:
+            self.last_error = error_message[:500]
+
     @property
     def token_status(self) -> str:
         """Legacy compatibility - returns health_status as string."""
@@ -208,6 +228,8 @@ class AccountState:
             "last_write_persisted": self.last_write_persisted,
             "last_write_error": self.last_write_error or None,
             "has_refresh_token": bool(self._raw_creds and self._raw_creds.get("refresh_token")),
+            "rate_limit_count": self.rate_limit_count,
+            "last_rate_limit_at": self.last_rate_limit_at or None,
         }
 
     def record_error(self, message: str, cooldown_s: int = 60) -> None:
@@ -302,6 +324,8 @@ class AccountPool:
             new_state.error_count = acct.error_count
             new_state.cooldown_until = acct.cooldown_until
             new_state.requests_count = acct.requests_count
+            new_state.rate_limit_count = acct.rate_limit_count
+            new_state.last_rate_limit_at = acct.last_rate_limit_at
             new_state.last_error = acct.last_error
             new_state.enabled = acct.enabled
             # Preserve auth state across reloads
@@ -338,17 +362,16 @@ class AccountPool:
 
     # ── Selection (round-robin) ───────────────────────────────────
 
-    def select_account(self) -> AccountState | None:
-        """Pick the next eligible account via round-robin."""
-        eligible = [a for a in self.accounts.values() if a.enabled and not a.is_cooldown and a.refresh_token_hash]
+    def select_account(self, exclude_ids: set[str] | None = None) -> AccountState | None:
+        """Pick an eligible account randomly to spread load."""
+        eligible = [
+            a for a in self.accounts.values() 
+            if a.enabled and not a.is_cooldown and a.refresh_token_hash
+            and (not exclude_ids or a.account_id not in exclude_ids)
+        ]
         if not eligible:
             return None
-
-        # Ensure index is within range of currently eligible accounts
-        idx = self._rr_index % len(eligible)
-        acct = eligible[idx]
-        self._rr_index = (idx + 1) % len(eligible)
-        return acct
+        return random.choice(eligible)
 
     # ── Admin operations ──────────────────────────────────────────
 

@@ -315,6 +315,26 @@ _REQUIRED_KEYS = {"refresh_token"}  # Must have at minimum this key
 _FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.json$")
 
 
+def _get_unique_path(base_dir: Path, name: str) -> tuple[Path, str]:
+    """Return a unique Path by appending _2, _3 etc. if file exists.
+    
+    Returns (Target_Path, Action_String). Action is 'new' or 'renamed'.
+    """
+    p = base_dir / name
+    if not p.exists():
+        return p, "new"
+    
+    stem = p.stem
+    suffix = p.suffix
+    counter = 2
+    while True:
+        new_name = f"{stem}_{counter}{suffix}"
+        new_p = base_dir / new_name
+        if not new_p.exists():
+            return new_p, "renamed"
+        counter += 1
+
+
 @router.post("/api/upload")
 async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_user)) -> dict[str, Any]:
     """Validate + save uploaded credential JSON file."""
@@ -360,10 +380,9 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
     if not data.get("expiry_date"):
         data["expiry_date"] = int(time.time() * 1000) + 7 * 24 * 3600 * 1000  # 7 days
 
-    # 6. Try to save to creds_dir — gracefully handle permission errors
+    # 6. Find unique filename
     pool: AccountPool = request.app.state.pool
-    target = settings.creds_dir / name
-    exists = target.exists()
+    target, action = _get_unique_path(settings.creds_dir, name)
     write_succeeded = True
     try:
         target.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -382,7 +401,7 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
             target, exc,
         )
 
-    account_id = Path(name).stem
+    account_id = target.stem
 
     # 7. Register in pool (even if disk write failed)
     if write_succeeded and target.exists():
@@ -409,7 +428,6 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
     else:
         pool.scan()
 
-    action = "overwritten" if exists else "new"
     if not write_succeeded:
         action = "memory_only"
 
@@ -423,7 +441,8 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
         logging.INFO, "upload",
         {
             "account_id": account_id,
-            "detail": f"{'Overwritten' if exists else 'New'} credential: {account_id}"
+            "action": action,
+            "detail": f"{'New' if action == 'new' else 'Renamed'} credential: {account_id}"
             + ("" if write_succeeded else " (in-memory only)"),
         },
     )
@@ -431,6 +450,7 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
     return {
         "status": "ok",
         "account_id": account_id,
+        "saved_filename": target.name,
         "action": action,
         "persisted": write_succeeded,
     }

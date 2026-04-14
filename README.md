@@ -18,26 +18,53 @@ OpenAI 兼容的千问 OAuth 反代服务，支持多账号池、凭证热重载
 
 ## 快速启动
 
-### 前置
+### 新手推荐：Docker 部署
+
+第一次使用，按下面 4 步执行即可：
+
+1. 在宿主机先登录千问，生成本地凭证：
 
 ```bash
-# 使用千问 CLI 认证，生成 ~/.qwen/oauth_creds.json
 qwen login
 ```
 
-### Docker
+2. 复制配置文件：
 
+```bash
 cp .env.example .env.secret
-docker compose --env-file .env.secret up -d
 ```
 
+3. 编辑 `.env.secret`，至少确认这几个值：
+
+- `ADMIN_PASSWORD=你的管理面板密码`
+- `API_KEY=你的接口密钥`（如果你要对外提供 API，建议设置）
+- `HOST_PORT=31998`（默认即可）
+
+4. 用下面这条命令启动：
+
+```bash
+docker compose --env-file .env.secret up -d --build
+```
+
+启动后访问：
+
+- 管理面板：`http://你的服务器IP:31998/admin/`
+- 健康检查：`http://你的服务器IP:31998/healthz`
+- 模型接口：`http://你的服务器IP:31998/v1/chat/completions`
+
 > [!IMPORTANT]
-> **版本升级注意**：如果你是从旧版（使用 `~/.qwen` 挂载）升级，默认会看到空列表。请参考[旧版迁移指南](#旧版迁移至-named-volume)。
+> 如果你使用的是 `.env.secret`，启动时必须带上 `--env-file .env.secret`。  
+> 只执行 `docker compose up -d` 时，Docker Compose 默认不会读取这个文件。
 
 > [!TIP]
-> 默认使用 Docker 命名卷 `qwen_creds` 进行持久化，这是最稳定且不影响宿主机的方案。
+> 默认使用 Docker 命名卷 `qwen_creds` 持久化凭证。这是最省心的方案，不会直接改动宿主机 `~/.qwen` 的权限。
+
+> [!IMPORTANT]
+> 如果你是从旧版（使用 `~/.qwen` 挂载）升级，第一次启动看到空账号列表是正常现象。请参考[旧版迁移指南](#旧版迁移至-named-volume)把旧凭证迁移进新卷。
 
 ### 本地开发
+
+如果你只是本地运行，不用 Docker：
 
 ```bash
 uv sync

@@ -26,6 +26,7 @@ class AccountHealthStatus(str, Enum):
     EXPIRING_SOON = "expiring_soon"
     EXPIRED = "expired"
     RATE_LIMITED = "rate_limited"
+    QUOTA_EXHAUSTED = "quota_exhausted"
     COOLDOWN = "cooldown"
     REFRESH_FAILED = "refresh_failed"
     AUTH_ERROR = "auth_error"
@@ -54,6 +55,7 @@ class AccountState:
     # Rate limiting
     rate_limit_count: int = 0
     last_rate_limit_at: float = 0.0
+    last_success_at: float = 0.0
     # Detailed health status
     health_status: AccountHealthStatus = AccountHealthStatus.UNKNOWN
     status_reason: str = ""  # i18n key (prefixed with 'reason_')
@@ -112,13 +114,20 @@ class AccountState:
 
         if self.is_cooldown:
             remaining = max(0, int(self.cooldown_until - time.time()))
-            # If rate_limited status is current, use that reason
+            # If rate_limited or quota_exhausted status is current, use that reason
             if self.health_status == AccountHealthStatus.RATE_LIMITED:
                 self.status_reason = "reason_rate_limited"
+            elif self.health_status == AccountHealthStatus.QUOTA_EXHAUSTED:
+                self.status_reason = "reason_quota_exhausted"
             else:
                 self.status_reason = "reason_cooldown"
+            
             self.status_reason_params = {"seconds": remaining}
-            return self.health_status if self.health_status in (AccountHealthStatus.RATE_LIMITED, AccountHealthStatus.COOLDOWN) else AccountHealthStatus.COOLDOWN
+            return self.health_status if self.health_status in (
+                AccountHealthStatus.RATE_LIMITED, 
+                AccountHealthStatus.QUOTA_EXHAUSTED, 
+                AccountHealthStatus.COOLDOWN
+            ) else AccountHealthStatus.COOLDOWN
 
         if not self.access_token or not self.expiry_date:
             self.status_reason = "reason_no_token"
@@ -192,6 +201,18 @@ class AccountState:
         if error_message:
             self.last_error = error_message[:500]
 
+    def mark_quota_exhausted(self, error_message: str = "", duration_s: int = 14400) -> None:
+        """Mark account as quota exhausted (daily quota reached).
+        
+        Default duration is 4 hours (14400s), which is conservative.
+        """
+        self.cooldown_until = time.time() + duration_s
+        self.health_status = AccountHealthStatus.QUOTA_EXHAUSTED
+        self.status_reason = "reason_quota_exhausted"
+        self.status_reason_params = {"seconds": int(duration_s), "error": error_message[:100]}
+        if error_message:
+            self.last_error = error_message[:500]
+
     @property
     def token_status(self) -> str:
         """Legacy compatibility - returns health_status as string."""
@@ -230,6 +251,7 @@ class AccountState:
             "has_refresh_token": bool(self._raw_creds and self._raw_creds.get("refresh_token")),
             "rate_limit_count": self.rate_limit_count,
             "last_rate_limit_at": self.last_rate_limit_at or None,
+            "last_success_at": self.last_success_at or None,
         }
 
     def record_error(self, message: str, cooldown_s: int = 60) -> None:
@@ -241,6 +263,7 @@ class AccountState:
         self.error_count = 0
         self.cooldown_until = 0.0
         self.requests_count += 1
+        self.last_success_at = time.time()
         self.mark_refresh_success()
 
 
@@ -249,7 +272,7 @@ class AccountPool:
 
     def __init__(self) -> None:
         self.accounts: dict[str, AccountState] = {}
-        self._rr_index = 0
+        self.last_success_account_id = ""
         self._last_scan_time = 0.0
         self._explicitly_disabled: set[str] = set()
 
@@ -363,15 +386,40 @@ class AccountPool:
     # ── Selection (round-robin) ───────────────────────────────────
 
     def select_account(self, exclude_ids: set[str] | None = None) -> AccountState | None:
-        """Pick an eligible account randomly to spread load."""
-        eligible = [
-            a for a in self.accounts.values() 
-            if a.enabled and not a.is_cooldown and a.refresh_token_hash
-            and (not exclude_ids or a.account_id not in exclude_ids)
-        ]
-        if not eligible:
+        """Sequential round-robin selection starting from the last success.
+        
+        Prioritizes the account following the last successful one.
+        """
+        # 1. Get stable list of IDs
+        all_ids = sorted(self.accounts.keys())
+        if not all_ids:
             return None
-        return random.choice(eligible)
+            
+        # 2. Find start index (after last success)
+        start_idx = 0
+        if self.last_success_account_id in self.accounts:
+            try:
+                # Find current anchor index
+                current_idx = all_ids.index(self.last_success_account_id)
+                start_idx = (current_idx + 1) % len(all_ids)
+            except ValueError:
+                pass
+                
+        # 3. Iterate sequentially from start_idx
+        for i in range(len(all_ids)):
+            idx = (start_idx + i) % len(all_ids)
+            aid = all_ids[idx]
+            a = self.accounts[aid]
+            
+            # Skip logic
+            if not a.enabled: continue
+            if a.is_cooldown: continue
+            if not a.refresh_token_hash: continue
+            if exclude_ids and a.account_id in exclude_ids: continue
+            
+            return a
+            
+        return None
 
     # ── Admin operations ──────────────────────────────────────────
 

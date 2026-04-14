@@ -40,6 +40,7 @@ a { color: var(--accent); }
 .badge-info { background: #1f6feb22; color: var(--accent); border: 1px solid #1f6feb66; }
 .badge-disabled { background: #484f5822; color: var(--muted); border: 1px solid #484f5866; }
 .badge-cooldown { background: #db6d2822; color: var(--orange); border: 1px solid #db6d2866; }
+.badge-quota { background: #bc8cff22; color: var(--purple); border: 1px solid #bc8cff66; }
 .badge-warning { background: #d2992222; color: var(--yellow); border: 1px solid #d29922aa; }
 
 /* Account cards */
@@ -110,6 +111,7 @@ a { color: var(--accent); }
 .dot-expired { background: var(--orange); }
 .dot-error { background: var(--red); box-shadow: 0 0 4px var(--red); }
 .dot-cooldown, .dot-rate-limited { background: var(--orange); animation: pulse 1.5s infinite; }
+.dot-quota-exhausted { background: var(--purple); animation: pulse 2s infinite; }
 .dot-disabled { background: var(--muted); }
 .dot-no-token { background: var(--muted); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
@@ -288,6 +290,7 @@ const i18n = {
     status_refresh_failed: '刷新失败',
     status_cooldown: '冷却中',
     status_rate_limited: '触发限流',
+    status_quota_exhausted: '额度耗尽',
     status_disabled: '已禁用',
     status_no_token: '无 Token',
     status_unknown: '未知',
@@ -302,7 +305,8 @@ const i18n = {
     meta_timestamps: '关键时间',
     meta_reason: '状态说明',
     ts_last_check: '最近校验',
-    ts_last_success: '校验成功',
+    ts_last_verify_success: '校验成功',
+    ts_last_proxy_success: '最近成功',
     ts_last_failure: '校验失败',
     meta_persistence: '持久化状态',
     warning_not_persisted: '⚠️ 仅内存（写入磁盘失败，重启将丢失）',
@@ -355,6 +359,7 @@ const i18n = {
     reason_refresh_failed: 'Token 刷新失败：{error}',
     reason_cooldown: '正在冷却（剩余 {seconds} 秒）',
     reason_rate_limited: '限流冷却（剩余 {seconds} 秒）：{error}',
+    reason_quota_exhausted: '额度已用尽（预计 {seconds} 秒后重试）：{error}',
     reason_disabled: '账号已禁用',
     reason_no_token: '未加载 Access Token',
   },
@@ -405,6 +410,7 @@ const i18n = {
     status_refresh_failed: 'Refresh Failed',
     status_cooldown: 'Cooldown',
     status_rate_limited: 'Rate Limited',
+    status_quota_exhausted: 'Quota Exhausted',
     status_disabled: 'Disabled',
     status_no_token: 'No Token',
     status_unknown: 'Unknown',
@@ -419,7 +425,8 @@ const i18n = {
     meta_timestamps: 'Key Times',
     meta_reason: 'Reason',
     ts_last_check: 'Last Check',
-    ts_last_success: 'Last Success',
+    ts_last_verify_success: 'Verify Success',
+    ts_last_proxy_success: 'Last Success',
     ts_last_failure: 'Last Failure',
     meta_persistence: 'Persistence',
     warning_not_persisted: '⚠️ Memory Only (Write failed, will lose on restart)',
@@ -472,6 +479,7 @@ const i18n = {
     reason_refresh_failed: 'Token refresh failed: {error}',
     reason_cooldown: 'In cooldown ({seconds}s remaining)',
     reason_rate_limited: 'Rate limited ({seconds}s remaining): {error}',
+    reason_quota_exhausted: 'Quota exhausted ({seconds}s remaining): {error}',
     reason_disabled: 'Account disabled',
     reason_no_token: 'No access token loaded',
   }
@@ -567,6 +575,7 @@ function statusBadge(status) {
     expiring_soon: 'badge-expiring', expired: 'badge-error',
     auth_error: 'badge-error', refresh_failed: 'badge-error',
     cooldown: 'badge-cooldown', rate_limited: 'badge-cooldown',
+    quota_exhausted: 'badge-quota',
     disabled: 'badge-disabled',
     no_token: 'badge-info', unknown: 'badge-info',
   };
@@ -582,6 +591,7 @@ function statusDot(status) {
     expiring_soon: 'dot-expiring', expired: 'dot-expired',
     auth_error: 'dot-error', refresh_failed: 'dot-error',
     cooldown: 'dot-cooldown', rate_limited: 'dot-rate-limited',
+    quota_exhausted: 'dot-quota-exhausted',
     disabled: 'dot-disabled',
     no_token: 'dot-no-token', unknown: 'dot-disabled',
   };
@@ -615,17 +625,21 @@ function renderTimestamps(a) {
   const checkTime = a.last_auth_check_at;
   const successTime = a.last_auth_success_at;
   const failureTime = a.last_auth_failure_at;
-  if (!checkTime && !successTime && !failureTime) return '';
+  const lastSuccessReq = a.last_success_at;
+  const last429 = a.last_rate_limit_at;
 
   const rows = [];
-  if (checkTime) {
-    rows.push(`<div class="ts-row"><span class="ts-label">${t('ts_last_check')}</span><span class="ts-value">${fmtTimestamp(checkTime)}</span></div>`);
+  if (lastSuccessReq) {
+    rows.push(`<div class="ts-row"><span class="ts-label" title="Last successful proxy request">${t('ts_last_proxy_success')}</span><span class="ts-value good">🚀 ${fmtTimestamp(lastSuccessReq)}</span></div>`);
   }
   if (successTime) {
-    rows.push(`<div class="ts-row"><span class="ts-label">${t('ts_last_success')}</span><span class="ts-value good">${fmtTimestamp(successTime)}</span></div>`);
+    rows.push(`<div class="ts-row"><span class="ts-label" title="Last successful token verification">${t('ts_last_verify_success')}</span><span class="ts-value good">✅ ${fmtTimestamp(successTime)}</span></div>`);
   }
-  if (failureTime) {
-    rows.push(`<div class="ts-row"><span class="ts-label">${t('ts_last_failure')}</span><span class="ts-value bad">${fmtTimestamp(failureTime)}</span></div>`);
+  if (last429) {
+    rows.push(`<div class="ts-row"><span class="ts-label" title="Last 429 error">${t('status_rate_limited')}</span><span class="ts-value bad">⚠️ ${fmtTimestamp(last429)}</span></div>`);
+  }
+  if (checkTime) {
+    rows.push(`<div class="ts-row"><span class="ts-label">${t('ts_last_check')}</span><span class="ts-value">${fmtTimestamp(checkTime)}</span></div>`);
   }
   return `<div class="timestamps"><div style="color:var(--muted);font-size:0.7rem;margin-bottom:2px">${t('meta_timestamps')}</div>${rows.join('')}</div>`;
 }

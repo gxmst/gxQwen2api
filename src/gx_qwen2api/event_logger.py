@@ -140,6 +140,33 @@ class EventLogger:
             },
         )
 
+    def quota_exhausted(
+        self,
+        account_id: str,
+        error: str = "",
+        duration_s: int = 14400,
+    ) -> None:
+        self._emit(
+            logging.ERROR, "quota_exhausted",
+            {
+                "account_id": account_id,
+                "duration_s": duration_s,
+                "detail": f"Quota Exhausted! {account_id} isolated for {duration_s // 3600}h. {error[:50]}",
+            },
+        )
+
+    def rr_anchor_update(
+        self,
+        account_id: str,
+    ) -> None:
+        self._emit(
+            logging.DEBUG, "rr_anchor_update",
+            {
+                "account_id": account_id,
+                "detail": f"Round-robin anchor moved to {account_id}",
+            },
+        )
+
     # ── Token refresh ─────────────────────────────────────────────
 
     def refresh_started(self, account_id: str, url: str) -> None:

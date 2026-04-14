@@ -16,7 +16,7 @@ from .auth import AuthManager
 from .config import settings
 from .event_logger import event_logger
 from .headers import build_headers
-from .models import ChatCompletionRequest, is_auth_error, is_quota_error, is_validation_error
+from .models import ChatCompletionRequest, is_auth_error, is_quota_error, is_quota_exhausted, is_validation_error
 
 logger = logging.getLogger("gx_qwen2api.dispatcher")
 
@@ -84,11 +84,20 @@ class Dispatcher:
                 # 3. Handle 429 (Rate Limit)
                 if resp.status_code == 429:
                     retry_after = self._parse_retry_after(resp.headers.get("retry-after"))
-                    # Default cooldown if no Retry-After, use exponential basis for multiple hits
-                    cooldown = retry_after or min(300, 30 * (2 ** (acct.rate_limit_count % 4)))
                     
-                    acct.mark_rate_limited(f"Upstream 429", cooldown)
-                    event_logger.rate_limit_hit(account_id, retry_after, "Too Many Requests")
+                    # Distinguish between temporary rate limit and daily quota exhaustion
+                    if is_quota_exhausted(resp.status_code, resp.text):
+                        # Quota exhausted: Long cooldown
+                        cooldown = settings.quota_cooldown_seconds
+                        acct.mark_quota_exhausted(resp.text, cooldown)
+                        event_logger.quota_exhausted(account_id, resp.text, cooldown)
+                        logger.error(f"Account {account_id} daily quota exhausted. Isolated for {cooldown // 3600}h.")
+                    else:
+                        # Temporary rate limit
+                        # Default cooldown if no Retry-After, use exponential basis for multiple hits
+                        cooldown = retry_after or min(300, 30 * (2 ** (acct.rate_limit_count % 4)))
+                        acct.mark_rate_limited(f"Upstream 429", cooldown)
+                        event_logger.rate_limit_hit(account_id, retry_after, "Too Many Requests")
                     
                     if attempt < settings.max_retries:
                         # Failover strategy: check if ANY other account is available
@@ -104,9 +113,19 @@ class Dispatcher:
                     
                     # If we're here, either it's the last attempt or no healthy accounts left.
                     # Stop failover and return the 429 response to the user so they see the real context.
+                    try:
+                        error_body = resp.json()
+                    except Exception:
+                        error_body = {
+                            "error": {
+                                "message": resp.text[:256] or "Too Many Requests (Upstream 429)",
+                                "type": "rate_limit_error"
+                            }
+                        }
+
                     return JSONResponse(
                         status_code=429,
-                        content=resp.json() if resp.text else {"error": {"message": "Too Many Requests", "type": "rate_limit_error"}},
+                        content=error_body,
                         headers={"Retry-After": str(retry_after)} if retry_after else {}
                     )
 
@@ -125,6 +144,10 @@ class Dispatcher:
                 # 5. Handle Success or non-retryable errors
                 resp.raise_for_status()
                 
+                # Update Round-Robin anchor on success
+                self.auth_mgr.pool.last_success_account_id = account_id
+                event_logger.rr_anchor_update(account_id)
+
                 # SUCCESS
                 if request.stream:
                     return self._create_streaming_response(resp, account_id, request_id)

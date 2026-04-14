@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Retry
     max_retries: int = 5
     retry_delay_ms: int = 1000
+    quota_cooldown_seconds: int = 14400 # 4 hours by default
 
     # Qwen API (hardcoded)
     qwen_api_base: str = "https://portal.qwen.ai/v1"

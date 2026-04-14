@@ -46,7 +46,7 @@ def is_auth_error(status: int | None, message: str) -> bool:
 
 
 def is_quota_error(status: int | None, message: str) -> bool:
-    """Check if error is quota/rate limit related (429 or quota message)."""
+    """Check if error is quota/rate limit related."""
     if status == 429:
         return True
     msg_lower = message.lower()
@@ -54,6 +54,21 @@ def is_quota_error(status: int | None, message: str) -> bool:
         x in msg_lower
         for x in ["insufficient_quota", "quota exceeded", "rate limit", "too many requests"]
     )
+
+
+def is_quota_exhausted(status: int | None, message: str) -> bool:
+    """Explicitly detect daily/monthly quota exhaustion (vs temporary limit)."""
+    msg_lower = message.lower()
+    # 429 often means rate limit, but certain messages mean "no more quota for today"
+    exhaust_keywords = [
+        "quota exceeded",
+        "free daily quota has been reached",
+        "daily quota",
+        "monthly quota",
+        "insufficient_quota",
+        "out of quota",
+    ]
+    return any(k in msg_lower for k in exhaust_keywords)
 
 
 def is_validation_error(message: str) -> bool:

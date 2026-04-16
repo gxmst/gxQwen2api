@@ -413,6 +413,7 @@ class AccountPool:
             
             # Skip logic
             if not a.enabled: continue
+            if a.health_status == AccountHealthStatus.AUTH_ERROR: continue
             if a.is_cooldown: continue
             if not a.refresh_token_hash: continue
             if exclude_ids and a.account_id in exclude_ids: continue

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import time
 from typing import Any
@@ -133,10 +134,16 @@ class AutoRefresher:
                     dt = datetime.datetime.fromtimestamp(
                         acct.expiry_date / 1000, tz=datetime.timezone.utc
                     )
+                    
+                    raw = acct._raw_creds or {}
+                    res_url = raw.get("resource_url", "")
+                    
                     event_logger.auto_refresh_ok(
                         account_id=acct.account_id,
                         elapsed_ms=0,  # refresh_token already logs its own time
                         expires_at=dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        resource_url=res_url,
+                        url_changed=False # Not easily tracked here, but okay
                     )
                 else:
                     failed += 1

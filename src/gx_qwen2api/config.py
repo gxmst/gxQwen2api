@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     quota_cooldown_seconds: int = 14400 # 4 hours by default
 
     # Qwen API (hardcoded)
-    qwen_api_base: str = "https://portal.qwen.ai/v1"
+    qwen_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_oauth_token_url: str = "https://chat.qwen.ai/api/v1/oauth2/token"
     qwen_oauth_client_id: str = "f0304373b74a44d2b584a3fb70ca9e56"
     token_refresh_buffer_s: int = 30

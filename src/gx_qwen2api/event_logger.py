@@ -176,15 +176,19 @@ class EventLogger:
         )
 
     def refresh_succeeded(
-        self, account_id: str, elapsed_ms: float, expires_at: str
+        self, account_id: str, elapsed_ms: float, expires_at: str,
+        resource_url: str = "", url_changed: bool = False
     ) -> None:
+        url_part = f", URL changed: {url_changed}" if url_changed else ""
         self._emit(
             logging.INFO, "refresh_ok",
             {
                 "account_id": account_id,
                 "elapsed_ms": round(elapsed_ms, 1),
                 "expires_at": expires_at,
-                "detail": f"OK in {elapsed_ms:.0f}ms, expires {expires_at}",
+                "resource_url": resource_url,
+                "url_changed": url_changed,
+                "detail": f"OK in {elapsed_ms:.0f}ms, expires {expires_at}{url_part}",
             },
         )
 
@@ -244,14 +248,20 @@ class EventLogger:
             {"detail": "Auto-refresh cycle started"},
         )
 
-    def auto_refresh_ok(self, account_id: str, elapsed_ms: float, expires_at: str) -> None:
+    def auto_refresh_ok(
+        self, account_id: str, elapsed_ms: float, expires_at: str,
+        resource_url: str = "", url_changed: bool = False
+    ) -> None:
+        url_part = f", URL changed" if url_changed else ""
         self._emit(
             logging.INFO, "auto_refresh_ok",
             {
                 "account_id": account_id,
                 "elapsed_ms": round(elapsed_ms, 1),
                 "expires_at": expires_at,
-                "detail": f"Auto-refresh OK: {account_id}, expires {expires_at}",
+                "resource_url": resource_url,
+                "url_changed": url_changed,
+                "detail": f"Auto-refresh OK: {account_id}, expires {expires_at}{url_part}",
             },
         )
 

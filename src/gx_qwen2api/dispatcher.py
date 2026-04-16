@@ -52,6 +52,7 @@ class Dispatcher:
         last_error_msg = "Unknown error"
         last_status = 500
         tried_accounts: set[str] = set()
+        refreshed_accounts: set[str] = set()
         
         # We allow up to max_retries total attempts across all accounts
         for attempt in range(1, settings.max_retries + 1):
@@ -131,12 +132,34 @@ class Dispatcher:
 
                 # 4. Handle Auth errors (401/403)
                 if is_auth_error(resp.status_code, resp.text):
-                    logger.warning(f"Auth error (401/403) on {account_id}. Forcing refresh...")
+                    if account_id in refreshed_accounts:
+                        # Logic: 401 -> refresh 200 -> 401 again.
+                        # This token/endpoint pair is definitely broken.
+                        old_url = acct._raw_creds.get("resource_url", "") if acct._raw_creds else "none"
+                        logger.error(
+                            f"Account {account_id} still returns 401 after refresh! Isolate. "
+                            f"Used Endpoint: {endpoint}, resource_url: {old_url}"
+                        )
+                        acct.mark_auth_error(f"Still 401 after refresh (endpoint: {endpoint})")
+                        tried_accounts.add(account_id)
+                        
+                        if attempt < settings.max_retries:
+                            continue
+                        else:
+                            resp.raise_for_status()
+
+                    logger.warning(f"Auth error (401/403) on {account_id}. Forcing refresh... Endpoint: {endpoint}")
+                    
+                    old_url = acct._raw_creds.get("resource_url", "") if acct._raw_creds else "none"
                     await self.auth_mgr.refresh_token(acct, client)
+                    new_url = acct._raw_creds.get("resource_url", "") if acct._raw_creds else "none"
+                    
+                    if old_url != new_url:
+                        logger.info(f"Account {account_id} URL changed after refresh: {old_url} -> {new_url}")
+                    
+                    refreshed_accounts.add(account_id)
+                    
                     if attempt < settings.max_retries:
-                        # Optional: should we exclude here? Usually no, because we just refreshed.
-                        # But to be safe against infinite refresh loops on same bad account, we could.
-                        # For now, we trust refresh_token state.
                         continue
                     else:
                         resp.raise_for_status()
@@ -220,8 +243,7 @@ class Dispatcher:
                 
             except Exception as e:
                 logger.error(f"Stream error for {request_id} (account: {account_id}): {e}")
-                # Send error SSE event
-                # OpenAI spec: some clients look for an 'error' block in the JSON data
+                # Send error SSE data (OpenAI compatible)
                 err_json = json.dumps({
                     "error": {
                         "message": f"Streaming error: {str(e)}",
@@ -229,7 +251,8 @@ class Dispatcher:
                         "account_id": account_id
                     }
                 })
-                yield f"event: error\ndata: {err_json}\n\n".encode("utf-8")
+                yield f"data: {err_json}\n\n".encode("utf-8")
+                yield b"data: [DONE]\n\n"
                 
             finally:
                 await resp.aclose()

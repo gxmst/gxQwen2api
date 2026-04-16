@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import hashlib
 import json
+import logging
 import time
 from typing import Any
 
@@ -130,23 +131,27 @@ class AuthManager:
             )
             return False
 
-        # Update account state
+        # Persist to disk
+        old_url = raw.get("resource_url", "")
+        new_url = token_data.get("resource_url", old_url)
         new_expiry = int(time.time() * 1000) + int(token_data.get("expires_in", 0)) * 1000
         new_rt = token_data.get("refresh_token", raw.get("refresh_token", ""))
+        
+        raw["access_token"] = token_data["access_token"]
+        raw["refresh_token"] = new_rt
+        raw["expiry_date"] = new_expiry
+        raw["token_type"] = token_data.get("token_type", raw.get("token_type", ""))
+        raw["resource_url"] = new_url
+        
+        # Sync in-memory state
         acct.access_token = token_data["access_token"]
         acct.expiry_date = new_expiry
         acct.refresh_token_hash = (
             hashlib.sha256(new_rt.encode()).hexdigest()[:8] if new_rt else ""
         )
-        acct._raw_creds = {**raw, "refresh_token": new_rt}
+        acct._raw_creds = raw.copy() # Use a copy to avoid external mutations
         acct.last_error = ""
 
-        # Persist to disk
-        raw["access_token"] = token_data["access_token"]
-        raw["refresh_token"] = new_rt
-        raw["expiry_date"] = new_expiry
-        raw["token_type"] = token_data.get("token_type", raw.get("token_type", ""))
-        raw["resource_url"] = token_data.get("resource_url", raw.get("resource_url", ""))
         self.pool.save_creds(acct.account_id, raw)
 
         dt = datetime.datetime.fromtimestamp(
@@ -155,10 +160,19 @@ class AuthManager:
         acct.last_refresh = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
         acct.record_success()
 
+        url_changed = (old_url != new_url)
+        logger = logging.getLogger("gx_qwen2api")
+        logger.info(
+            "Account %s refresh success. URL changed: %s, URL: %s",
+            acct.account_id, url_changed, new_url
+        )
+
         event_logger.refresh_succeeded(
             account_id=acct.account_id,
             elapsed_ms=elapsed_ms,
             expires_at=dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
+            resource_url=new_url,
+            url_changed=url_changed
         )
         return True
 

@@ -1,10 +1,14 @@
 # gxQwen2api
 
-OpenAI 兼容的千问 OAuth 反代服务，支持多账号池、凭证热重载、内置管理仪表盘。
+一个带管理面板的 OpenAI 兼容代理壳子。项目最初面向 Qwen OAuth，多账号池、凭证热重载、健康状态机和后台面板都已做完；当前也接入了实验性的 Freebuff / Codebuff 渠道。
+
+> [!IMPORTANT]
+> `Qwen OAuth` 免费额度已停用，Qwen 渠道目前仅保留为兼容旧凭证与实验用途，不再建议作为主链路依赖。
 
 ## 特性
 
 - **多账号池** — 自动扫描凭证目录下所有 `*.json` 凭证文件，注册为独立账号
+- **多渠道账号分组** — 管理面板按 Provider 分组显示，Qwen / Freebuff 使用不同边框颜色区分
 - **精准账号状态** — 不再仅依赖过期时间，实时追踪认证错误、刷新失败、冷却等状态
 - **Token 校验** — 管理面板提供"校验"按钮，手动验证账号当前是否真实可用
 - **自动预刷新** — 后台定期扫描，在 token 到期前自动续期，无需等待用户请求
@@ -15,6 +19,7 @@ OpenAI 兼容的千问 OAuth 反代服务，支持多账号池、凭证热重载
 - **多语言管理面板** — 默认中文界面，支持一键切换英文，文案集中管理便于扩展
 - **轻量管理仪表盘** — 单页 HTML，零 JS 依赖，暗色主题，支持自动刷新、移动端适配
 - **内存友好** — 环形日志缓冲 200 条上限，无 opentelemetry 依赖
+- **模型列表面板** — `/admin/` 可直接查看当前按 Provider 聚合的可用模型列表
 
 ## 快速启动
 
@@ -22,11 +27,16 @@ OpenAI 兼容的千问 OAuth 反代服务，支持多账号池、凭证热重载
 
 第一次使用，按下面 4 步执行即可：
 
-1. 在宿主机先登录千问，生成本地凭证：
+1. 准备凭证文件：
 
 ```bash
-qwen login
+mkdir -p data/creds
 ```
+
+可选来源：
+
+- `Qwen OAuth`：先在宿主机执行 `qwen login`，再把生成的 `oauth_creds.json` 放进 `data/creds/`
+- `Freebuff / Codebuff`：把本地 CLI 生成的 `auth-tokens.json` 或单个 `authToken` JSON 放进 `data/creds/`
 
 2. 复制配置文件：
 
@@ -59,6 +69,9 @@ docker compose --env-file .env.secret up -d --build
 > [!TIP]
 > 默认使用 Docker 命名卷 `qwen_creds` 持久化凭证。这是最省心的方案，不会直接改动宿主机 `~/.qwen` 的权限。
 
+> [!WARNING]
+> `Freebuff / Codebuff` 目前按上游实际行为属于**实验性接入**。已知免费模式存在地区限制，如果上游直接返回 `Free mode is not available in your country.`，说明当前出口 IP 所在地区不可用，不是本项目本地凭证解析错误。
+
 > [!IMPORTANT]
 > 如果你是从旧版（使用 `~/.qwen` 挂载）升级，第一次启动看到空账号列表是正常现象。请参考[旧版迁移指南](#旧版迁移至-named-volume)把旧凭证迁移进新卷。
 
@@ -90,6 +103,7 @@ uv run python -m gx_qwen2api.main
 浏览器打开 `http://localhost:31998/admin/`：
 
 - 所有账号的 token 状态、过期时间、错误数
+- **Provider 分组** — Qwen / Freebuff 账号分开展示，使用不同颜色边框区分
 - **多语言切换** — 默认中文，右上角一键切换英文（语言偏好保存到 localStorage）
 - **启用 / 禁用** 单个账号（禁用时有确认对话框）
 - **强制刷新** 单个账号的 token
@@ -100,6 +114,7 @@ uv run python -m gx_qwen2api.main
 - 实时事件日志流（彩色编码）
 - 自动刷新开关（5s / 15s / 30s / 60s）
 - **上传凭证** — 支持拖拽上传，上传后显示成功/失败详情
+- **当前模型** — 直接查看当前按 Provider 汇总的模型列表
 - **关键时间戳** — 每个账号显示最近校验时间、校验成功时间、校验失败时间
 - **冷却倒计时** — 冷却中的账号实时显示剩余秒数
 - **登录状态** — 设置了 ADMIN_PASSWORD 后显示登录状态和退出按钮
@@ -123,16 +138,16 @@ uv run python -m gx_qwen2api.main
 
 ## 多账号配置
 
-在凭证目录（默认 `~/.qwen`）下放置任意数量的 `*.json` 文件：
+在凭证目录（推荐 `./data/creds`）下放置任意数量的 `*.json` 文件：
 
 ```
-~/.qwen/
+/data/creds/
   oauth_creds.json       ← 主账号
   account2.json          ← 第二账号
   service-bot.json       ← 服务账号
 ```
 
-每个文件格式为标准千问 OAuth 结构：
+### Qwen OAuth 凭证格式
 
 ```json
 {
@@ -144,7 +159,44 @@ uv run python -m gx_qwen2api.main
 }
 ```
 
-文件名即为账号 ID，启动时自动扫描注册。运行中可通过管理面板 `Scan Creds Dir` 发现新文件。
+### Freebuff / Codebuff 凭证格式
+
+支持以下三种格式：
+
+1. 单 token 文件
+
+```json
+{
+  "authToken": "..."
+}
+```
+
+2. 带 `default` 包裹的 token
+
+```json
+{
+  "default": {
+    "authToken": "..."
+  }
+}
+```
+
+3. Freebuff CLI 导出的 token 列表
+
+```json
+{
+  "tokens": [
+    {
+      "name": "my-account",
+      "authToken": "..."
+    }
+  ]
+}
+```
+
+第 3 种格式会自动拆成多个账号，例如 `auth-tokens_1`、`auth-tokens_2`。
+
+文件名即为账号 ID（或账号前缀），启动时自动扫描注册。运行中可通过管理面板 `Scan Creds Dir` 发现新文件。
 
 ## 环境变量
 
@@ -159,11 +211,14 @@ uv run python -m gx_qwen2api.main
 | `QWEN_CODE_AUTH_USE` | `true` | 启用千问 OAuth |
 | `API_KEY` | _(空)_ | 可选 API 密钥，逗号分隔多个 |
 | `DEFAULT_MODEL` | `coder-model` | 默认模型 |
-| `CREDS_DIR` | `~/.qwen` | 凭证目录（扫描 `*.json`） |
+| `CREDS_DIR` | `./data/creds` | 凭证目录（扫描 `*.json`） |
 | `ADMIN_ENABLED` | `true` | 启用管理面板 |
 | `ADMIN_PASSWORD` | _(空)_ | 管理员密码（可选，设置后所有管理操作需要认证） |
 
 ## 自动预刷新
+
+> [!NOTE]
+> 自动预刷新只对 `Qwen OAuth` 账号生效。`Freebuff / Codebuff` 当前按上游本地 token 方式工作，不走本项目的 refresh_token 流程。
 
 本项目支持后台自动预刷新，在 `access_token` 即将过期前自动续期，无需等待用户请求。
 
@@ -274,6 +329,7 @@ src/gx_qwen2api/
   config.py            — Pydantic 配置
   account_pool.py      — 多账号池：扫描、选择、mtime 重载、启用/禁用
   auth.py              — OAuth 刷新，带详细调试日志
+  providers/           — Provider 适配层（Qwen / Freebuff）
   event_logger.py      — 环形缓冲事件日志（200 条上限）
   message_transform.py  — cache_control + 自定义 system prompt 注入
   models.py            — 模型别名、错误分类

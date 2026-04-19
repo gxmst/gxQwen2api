@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     token_refresh_buffer_s: int = 30
 
     # Freebuff / Codebuff
-    freebuff_api_base: str = "https://codebuff.com"
+    freebuff_api_base: str = "https://www.codebuff.com"
     freebuff_rotation_interval_seconds: int = 21600
     freebuff_model_source_url: str = (
         "https://raw.githubusercontent.com/CodebuffAI/codebuff/main/common/src/constants/free-agents.ts"

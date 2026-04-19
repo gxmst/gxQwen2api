@@ -402,6 +402,7 @@ class FreebuffProvider:
             json=payload,
             headers=self._build_headers(acct.access_token),
             timeout=30.0,
+            follow_redirects=True,
         )
         if resp.status_code == 401:
             acct.mark_auth_error("Freebuff start_run unauthorized")
@@ -437,6 +438,7 @@ class FreebuffProvider:
                 json=payload,
                 headers=self._build_headers(acct.access_token),
                 timeout=15.0,
+                follow_redirects=True,
             )
         except Exception:
             logger.debug("Freebuff finish_run request failed for %s", run.run_id, exc_info=True)

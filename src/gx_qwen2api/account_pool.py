@@ -41,6 +41,7 @@ class AccountState:
     account_id: str
     creds_file: Path
     provider: str = "qwen"
+    source_slot: str = ""
     enabled: bool = True
     # Token state
     access_token: str = ""
@@ -236,6 +237,7 @@ class AccountState:
             "account_id": self.account_id,
             "creds_file": str(self.creds_file),
             "provider": self.provider,
+            "source_slot": self.source_slot or None,
             "enabled": self.enabled,
             "token_status": self.token_status,
             "health_status": self.health_status.value,
@@ -302,24 +304,77 @@ class AccountPool:
 
         found_files: set[str] = set()
         for f in creds_dir.glob("*.json"):
-            aid = f.stem
-            found_files.add(aid)
-            if aid not in self.accounts:
-                state = self._try_load_account(aid, f)
-                if state:
-                    self.accounts[aid] = state
+            states = self._load_accounts_from_file(f)
+            for state in states:
+                aid = state.account_id
+                found_files.add(aid)
+                existing = self.accounts.get(aid)
+                if existing:
+                    state.enabled = existing.enabled
+                    state.error_count = existing.error_count
+                    state.cooldown_until = existing.cooldown_until
+                    state.requests_count = existing.requests_count
+                    state.rate_limit_count = existing.rate_limit_count
+                    state.last_rate_limit_at = existing.last_rate_limit_at
+                    state.last_error = existing.last_error
+                    state.last_auth_error = existing.last_auth_error
+                    state.last_refresh_success = existing.last_refresh_success
+                    state.last_auth_check_at = existing.last_auth_check_at
+                    state.last_auth_success_at = existing.last_auth_success_at
+                    state.last_auth_failure_at = existing.last_auth_failure_at
+                    state.last_auto_refresh_at = existing.last_auto_refresh_at
+                    state.last_auto_refresh_result = existing.last_auto_refresh_result
+                    state.last_auto_refresh_error = existing.last_auto_refresh_error
+                    state.last_write_persisted = existing.last_write_persisted
+                    state.last_write_error = existing.last_write_error
+                self.accounts[aid] = state
 
         # Remove accounts whose files disappeared
         for aid in list(self.accounts):
             if aid not in found_files and aid not in self._explicitly_disabled:
                 pass  # Keep in-memory state even if file gone
 
-    def _try_load_account(self, account_id: str, path: Path) -> AccountState | None:
-        """Try to parse a creds JSON file into an AccountState."""
+    def _load_accounts_from_file(self, path: Path) -> list[AccountState]:
+        """Parse a credential file into one or more AccountState entries."""
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            return None
+            return []
+
+        # Freebuff auth-tokens.json format: {"tokens": [{"authToken": ...}, ...]}
+        if isinstance(raw.get("tokens"), list):
+            states: list[AccountState] = []
+            valid_tokens = [
+                token for token in raw["tokens"]
+                if isinstance(token, dict) and isinstance(token.get("authToken"), str) and token.get("authToken")
+            ]
+            for idx, token_data in enumerate(valid_tokens, start=1):
+                suffix = "" if len(valid_tokens) == 1 else f"_{idx}"
+                account_id = f"{path.stem}{suffix}"
+                state = self._build_account_state(account_id, path, {"authToken": token_data["authToken"], **token_data}, source_slot=str(idx))
+                if state:
+                    states.append(state)
+            return states
+
+        state = self._build_account_state(path.stem, path, raw)
+        return [state] if state else []
+
+    def _try_load_account(self, account_id: str, path: Path) -> AccountState | None:
+        """Backward-compatible single-account loader."""
+        for state in self._load_accounts_from_file(path):
+            if state.account_id == account_id:
+                return state
+        return None
+
+    def _build_account_state(
+        self,
+        account_id: str,
+        path: Path,
+        raw: dict[str, Any],
+        *,
+        source_slot: str = "",
+    ) -> AccountState | None:
+        """Build one AccountState from normalized credential data."""
 
         provider = "qwen"
         access_token = ""
@@ -352,6 +407,7 @@ class AccountPool:
             account_id=account_id,
             creds_file=path,
             provider=provider,
+            source_slot=source_slot,
             enabled=account_id not in self._explicitly_disabled,
             access_token=access_token,
             expiry_date=expiry_date,
@@ -377,7 +433,11 @@ class AccountPool:
         acct = self.accounts.get(account_id)
         if not acct:
             return False
-        new_state = self._try_load_account(account_id, acct.creds_file)
+        new_state = None
+        for state in self._load_accounts_from_file(acct.creds_file):
+            if state.account_id == account_id:
+                new_state = state
+                break
         if new_state:
             # Preserve runtime counters and auth state
             new_state.error_count = acct.error_count

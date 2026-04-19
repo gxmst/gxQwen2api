@@ -45,6 +45,13 @@ a { color: var(--accent); }
 
 /* Account cards */
 .accounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.provider-groups { display: flex; flex-direction: column; gap: 14px; }
+.provider-group { border: 2px solid var(--border); border-radius: 10px; padding: 12px; background: rgba(255,255,255,0.01); }
+.provider-group.provider-qwen { border-color: #1f6feb88; }
+.provider-group.provider-freebuff { border-color: #3fb95088; }
+.provider-group-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+.provider-group-title { font-size: 0.95rem; font-weight: 700; }
+.provider-group-meta { color: var(--muted); font-size: 0.76rem; }
 @media (max-width: 480px) {
   .accounts { grid-template-columns: 1fr; }
   .topbar { flex-direction: column; align-items: stretch; }
@@ -298,6 +305,7 @@ const i18n = {
     no_accounts: '未找到账号。请确保凭证目录中有 JSON 文件。',
     no_models: '暂无模型信息。',
     no_logs: '暂无事件日志。',
+    provider_group_accounts: '个账号',
     status_valid: '有效',
     status_expiring_soon: '即将过期',
     status_expired: '已过期',
@@ -423,6 +431,7 @@ const i18n = {
     no_accounts: 'No accounts found. Make sure JSON files exist in the creds directory.',
     no_models: 'No model information available.',
     no_logs: 'No events yet.',
+    provider_group_accounts: 'accounts',
     status_valid: 'Valid',
     status_expiring_soon: 'Expiring Soon',
     status_expired: 'Expired',
@@ -753,7 +762,14 @@ function renderAccounts(accounts, health) {
     document.getElementById('hUptime').textContent = fmtUptimeDisplay(health.uptime_seconds);
   }
 
-  el.innerHTML = accounts.map(a => {
+  const groups = new Map();
+  for (const account of accounts) {
+    const provider = (account.provider || 'qwen').toLowerCase();
+    if (!groups.has(provider)) groups.set(provider, []);
+    groups.get(provider).push(account);
+  }
+
+  const renderCard = (a) => {
     const healthStatus = a.health_status || a.token_status || 'unknown';
     const statusClass = cardStatusClass(healthStatus);
     const tokenExpiry = a.expires_in_minutes != null ? fmtExpires(Math.max(0, a.expires_in_minutes)) : t('no_expiry');
@@ -814,7 +830,22 @@ function renderAccounts(accounts, health) {
           <button class="btn btn-sm" onclick="doAccount('reload','${escAttr(a.account_id)}')">${t('btn_reload_file')}</button>
         </div>
       </div>`;
-  }).join('');
+  };
+
+  el.innerHTML = `<div class="provider-groups">` + Array.from(groups.entries()).map(([provider, providerAccounts]) => {
+    const providerKey = `provider_${provider}`;
+    const providerLabel = t(providerKey) || provider;
+    return `
+      <div class="provider-group provider-${escAttr(provider)}">
+        <div class="provider-group-header">
+          <div class="provider-group-title">${escHtml(providerLabel)}</div>
+          <div class="provider-group-meta">${providerAccounts.length} ${t('provider_group_accounts')}</div>
+        </div>
+        <div class="accounts">
+          ${providerAccounts.map(renderCard).join('')}
+        </div>
+      </div>`;
+  }).join('') + `</div>`;
 }
 
 function renderModels(data) {

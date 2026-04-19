@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     qwen_oauth_client_id: str = "f0304373b74a44d2b584a3fb70ca9e56"
     token_refresh_buffer_s: int = 30
 
+    # Freebuff / Codebuff
+    freebuff_api_base: str = "https://codebuff.com"
+    freebuff_rotation_interval_seconds: int = 21600
+    freebuff_model_source_url: str = (
+        "https://raw.githubusercontent.com/CodebuffAI/codebuff/main/common/src/constants/free-agents.ts"
+    )
+
     # Credentials directory — scanned for *.json files
     creds_dir: Path = Path.home() / ".qwen"
 

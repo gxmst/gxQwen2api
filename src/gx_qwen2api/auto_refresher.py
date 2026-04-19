@@ -183,6 +183,9 @@ class AutoRefresher:
         if not acct.enabled:
             return "skip:disabled"
 
+        if acct.provider != "qwen":
+            return "skip:provider"
+
         raw = acct._raw_creds
         if not raw or not raw.get("refresh_token"):
             return "skip:no_refresh_token"

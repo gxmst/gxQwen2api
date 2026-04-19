@@ -34,6 +34,11 @@ class AuthManager:
         self, acct: AccountState, client: httpx.AsyncClient
     ) -> bool:
         """Refresh a single account's access token. Returns True on success."""
+        if acct.provider != "qwen":
+            acct.record_error(f"Provider {acct.provider} does not support refresh")
+            acct.mark_refresh_failed(f"Provider {acct.provider} does not support refresh")
+            return False
+
         raw = acct._raw_creds
         if not raw or not raw.get("refresh_token"):
             acct.record_error("No refresh token available")
@@ -188,6 +193,8 @@ class AuthManager:
         async with self._get_lock(aid):
             # Re-read state in case another coroutine already refreshed it while we waited
             acct = self.pool.get_account(aid) or acct
+            if acct.provider != "qwen":
+                return False
             if acct.token_valid:
                 return True
                 
@@ -203,7 +210,7 @@ class AuthManager:
         """
         tried = set(exclude_ids or [])
         for _ in range(len(self.pool.accounts)):
-            acct = self.pool.select_account(exclude_ids=tried)
+            acct = self.pool.select_account(exclude_ids=tried, provider="qwen")
             if not acct:
                 break
             

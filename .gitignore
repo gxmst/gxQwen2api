@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 .env*
 !.env.example
+data/creds/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

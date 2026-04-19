@@ -75,6 +75,19 @@ async def chat_completions(
     is_streaming: bool = body.get("stream", False)
     model = resolve_model(body.get("model", settings.default_model))
     max_tokens = clamp_max_tokens(model, body.get("max_tokens", 32000))
+    freebuff = request.app.state.freebuff
+
+    if freebuff.can_handle_model(model):
+        payload = dict(body)
+        payload["model"] = model
+        payload["max_tokens"] = max_tokens
+        chat_req = ChatCompletionRequest(**payload)
+        request_id = str(uuid.uuid4())
+        try:
+            return await freebuff.chat_completions(chat_req, request_id)
+        except Exception as e:
+            logger.exception(f"Unhandled error in freebuff chat_completions: {e}")
+            return JSONResponse(status_code=500, content=make_error_response(str(e), "api_error"))
 
     request_id = str(uuid.uuid4())
     messages = body.get("messages", [])
@@ -82,7 +95,7 @@ async def chat_completions(
 
     session_id: str = request.app.state.session_id
     turn: int = request.app.state.request_count
-    
+
     # We build a ChatCompletionRequest model to ensure validation
     # then the dispatcher will use it.
     payload = _build_payload(body, messages, model, is_streaming, max_tokens, session_id, turn)

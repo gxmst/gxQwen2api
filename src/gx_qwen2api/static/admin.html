@@ -146,6 +146,14 @@ a { color: var(--accent); }
 #toast.error { border-color: var(--red); }
 #toast.warning { border-color: var(--yellow); }
 
+/* Models section */
+.models-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.model-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.model-card h3 { font-size: 0.95rem; display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+.model-meta { color: var(--muted); font-size: 0.76rem; margin-bottom: 8px; }
+.model-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.model-chip { font-size: 0.72rem; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border); background: #0d1117; color: var(--text); }
+
 /* Verification result */
 .verify-result { margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 0.8rem; }
 .verify-result.success { background: #23863622; border: 1px solid #23863666; color: var(--green); }
@@ -221,6 +229,11 @@ a { color: var(--accent); }
     <div style="color:var(--muted)" data-i18n="loading">加载中...</div>
   </div>
 
+  <h2 data-i18n="section_models">当前模型</h2>
+  <div class="models-grid" id="modelsPanel">
+    <div style="color:var(--muted)" data-i18n="loading">加载中...</div>
+  </div>
+
   <div class="upload-section">
     <h3 style="margin-bottom:8px" data-i18n="upload_title">📤 上传凭证</h3>
     <input type="file" id="credFile" accept=".json" style="display:none" onchange="uploadCredential()">
@@ -275,6 +288,7 @@ const i18n = {
     health_requests: '总请求数',
     health_uptime: '运行时间',
     section_accounts: '账号列表',
+    section_models: '当前模型',
     section_logs: '事件日志',
     loading: '加载中...',
     upload_title: '📤 上传凭证',
@@ -282,6 +296,7 @@ const i18n = {
     upload_hint: '文件名将作为账号 ID',
     logs_loading: '加载日志中...',
     no_accounts: '未找到账号。请确保凭证目录中有 JSON 文件。',
+    no_models: '暂无模型信息。',
     no_logs: '暂无事件日志。',
     status_valid: '有效',
     status_expiring_soon: '即将过期',
@@ -296,6 +311,7 @@ const i18n = {
     status_unknown: '未知',
     enabled: '已启用',
     disabled: '已禁用',
+    meta_provider: '渠道',
     meta_health: '健康状态',
     meta_reason: '状态说明',
     meta_expires: '剩余时间',
@@ -362,6 +378,8 @@ const i18n = {
     reason_quota_exhausted: '额度已用尽（预计 {seconds} 秒后重试）：{error}',
     reason_disabled: '账号已禁用',
     reason_no_token: '未加载 Access Token',
+    provider_qwen: 'Qwen OAuth',
+    provider_freebuff: 'Freebuff',
   },
   en: {
     title: 'gxQwen2api — Dashboard',
@@ -395,6 +413,7 @@ const i18n = {
     health_requests: 'Total Requests',
     health_uptime: 'Uptime',
     section_accounts: 'Accounts',
+    section_models: 'Models',
     section_logs: 'Event Logs',
     loading: 'Loading...',
     upload_title: '📤 Upload Credential',
@@ -402,6 +421,7 @@ const i18n = {
     upload_hint: 'Filename becomes account ID',
     logs_loading: 'Loading logs...',
     no_accounts: 'No accounts found. Make sure JSON files exist in the creds directory.',
+    no_models: 'No model information available.',
     no_logs: 'No events yet.',
     status_valid: 'Valid',
     status_expiring_soon: 'Expiring Soon',
@@ -416,6 +436,7 @@ const i18n = {
     status_unknown: 'Unknown',
     enabled: 'Enabled',
     disabled: 'Disabled',
+    meta_provider: 'Provider',
     meta_health: 'Health',
     meta_reason: 'Reason',
     meta_expires: 'Expires In',
@@ -482,6 +503,8 @@ const i18n = {
     reason_quota_exhausted: 'Quota exhausted ({seconds}s remaining): {error}',
     reason_disabled: 'Account disabled',
     reason_no_token: 'No access token loaded',
+    provider_qwen: 'Qwen OAuth',
+    provider_freebuff: 'Freebuff',
   }
 };
 
@@ -673,17 +696,20 @@ function renderAutoRefreshInfo(a) {
 
 // ── Main load ───────────────────────────────────────────────────
 async function loadAccounts() {
-  const [accRes, logsRes, healthRes, arRes] = await Promise.all([
+  const [accRes, logsRes, healthRes, arRes, modelsRes] = await Promise.all([
     fetch(API + '/admin/api/accounts'),
     fetch(API + '/admin/api/logs?limit=100'),
     fetch(API + '/health'),
     fetch(API + '/admin/api/auto-refresh/status').catch(() => null),
+    fetch(API + '/admin/api/models').catch(() => null),
   ]);
   const accounts = await accRes.json();
   const logs = await logsRes.json();
   const health = healthRes.ok ? await healthRes.json() : null;
   const arStatus = arRes && arRes.ok ? await arRes.json() : null;
+  const models = modelsRes && modelsRes.ok ? await modelsRes.json() : null;
   renderAccounts(accounts, health);
+  renderModels(models);
   renderLogs(logs);
   renderAutoRefreshStatus(arStatus);
   startCooldownTimers(accounts);
@@ -736,6 +762,9 @@ function renderAccounts(accounts, health) {
     const verifyDivId = `verify-${a.account_id}`;
     const timestampsHtml = renderTimestamps(a);
     const cooldownId = a.in_cooldown ? `cooldown-${a.account_id}` : '';
+    const providerKey = `provider_${(a.provider || 'qwen').toLowerCase()}`;
+    const providerLabel = t(providerKey) || a.provider || 'qwen';
+    const supportsRefresh = (a.provider || 'qwen') === 'qwen';
 
     return `
       <div class="card ${statusClass}" data-account="${escAttr(a.account_id)}" ${a.cooldown_until ? `data-cooldown="${a.cooldown_until}"` : ''}>
@@ -748,6 +777,10 @@ function renderAccounts(accounts, health) {
           </span>
         </h3>
         <div class="meta">
+          <div class="meta-row">
+            <span class="meta-label">${t('meta_provider')}</span>
+            <span class="meta-value"><span class="badge badge-info">${escHtml(providerLabel)}</span></span>
+          </div>
           <div class="meta-row">
             <span class="meta-label">${t('meta_health')}</span>
             <span class="meta-value">${statusBadge(healthStatus)}</span>
@@ -777,8 +810,35 @@ function renderAccounts(accounts, health) {
             ? `<button class="btn btn-sm btn-red" onclick="confirmDisable('${escAttr(a.account_id)}')">${t('btn_disable')}</button>`
             : `<button class="btn btn-sm btn-green" onclick="doAccount('enable','${escAttr(a.account_id)}')">${t('btn_enable')}</button>`}
           <button class="btn btn-sm btn-purple" onclick="doVerify('${escAttr(a.account_id)}')">${t('btn_verify')}</button>
-          <button class="btn btn-sm btn-blue" onclick="doAccount('refresh','${escAttr(a.account_id)}')">${t('btn_force_refresh')}</button>
+          ${supportsRefresh ? `<button class="btn btn-sm btn-blue" onclick="doAccount('refresh','${escAttr(a.account_id)}')">${t('btn_force_refresh')}</button>` : ''}
           <button class="btn btn-sm" onclick="doAccount('reload','${escAttr(a.account_id)}')">${t('btn_reload_file')}</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderModels(data) {
+  const el = document.getElementById('modelsPanel');
+  if (!el) return;
+  const providers = data && Array.isArray(data.providers) ? data.providers : [];
+  if (!providers.length) {
+    el.innerHTML = `<div style="color:var(--muted)">${t('no_models')}</div>`;
+    return;
+  }
+
+  el.innerHTML = providers.map(p => {
+    const providerKey = `provider_${(p.provider || '').toLowerCase()}`;
+    const providerLabel = t(providerKey) || p.label || p.provider || 'unknown';
+    const models = Array.isArray(p.models) ? p.models : [];
+    return `
+      <div class="model-card">
+        <h3>
+          <span>${escHtml(providerLabel)}</span>
+          <span class="badge badge-info">${models.length}</span>
+        </h3>
+        <div class="model-meta">Accounts: ${p.enabled_accounts || 0}</div>
+        <div class="model-list">
+          ${models.length ? models.map(m => `<span class="model-chip">${escHtml(m)}</span>`).join('') : `<span style="color:var(--muted)">${t('no_models')}</span>`}
         </div>
       </div>`;
   }).join('');

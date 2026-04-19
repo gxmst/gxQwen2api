@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import random
 import time
 import datetime
 from dataclasses import dataclass, field
@@ -41,6 +40,7 @@ class AccountState:
 
     account_id: str
     creds_file: Path
+    provider: str = "qwen"
     enabled: bool = True
     # Token state
     access_token: str = ""
@@ -81,12 +81,20 @@ class AccountState:
 
     @property
     def token_valid(self) -> bool:
+        if self.provider == "freebuff":
+            return bool(self.access_token)
         if not self.access_token or not self.expiry_date:
             return False
         return (
             time.time() * 1000
             < self.expiry_date - settings.token_refresh_buffer_s * 1000
         )
+
+    @property
+    def has_credential(self) -> bool:
+        if self.provider == "freebuff":
+            return bool(self.access_token)
+        return bool(self.refresh_token_hash)
 
     def compute_health(self) -> AccountHealthStatus:
         """Compute the detailed health status based on multiple factors.
@@ -128,6 +136,11 @@ class AccountState:
                 AccountHealthStatus.QUOTA_EXHAUSTED, 
                 AccountHealthStatus.COOLDOWN
             ) else AccountHealthStatus.COOLDOWN
+
+        if self.provider == "freebuff":
+            self.status_reason = "reason_valid" if self.access_token else "reason_no_token"
+            self.status_reason_params = {}
+            return AccountHealthStatus.VALID if self.access_token else AccountHealthStatus.NO_TOKEN
 
         if not self.access_token or not self.expiry_date:
             self.status_reason = "reason_no_token"
@@ -222,6 +235,7 @@ class AccountState:
         return {
             "account_id": self.account_id,
             "creds_file": str(self.creds_file),
+            "provider": self.provider,
             "enabled": self.enabled,
             "token_status": self.token_status,
             "health_status": self.health_status.value,
@@ -249,6 +263,7 @@ class AccountState:
             "last_write_persisted": self.last_write_persisted,
             "last_write_error": self.last_write_error or None,
             "has_refresh_token": bool(self._raw_creds and self._raw_creds.get("refresh_token")),
+            "has_credential": self.has_credential,
             "rate_limit_count": self.rate_limit_count,
             "last_rate_limit_at": self.last_rate_limit_at or None,
             "last_success_at": self.last_success_at or None,
@@ -306,24 +321,45 @@ class AccountPool:
         except (json.JSONDecodeError, OSError):
             return None
 
-        # Validate it looks like a qwen creds file
-        if not raw.get("refresh_token") and not raw.get("access_token"):
-            return None
+        provider = "qwen"
+        access_token = ""
+        expiry_date = 0
+        refresh_token_hash = ""
 
-        rt = raw.get("refresh_token", "")
-        rt_hash = hashlib.sha256(rt.encode()).hexdigest()[:8] if rt else ""
+        # Freebuff / Codebuff local credentials
+        if isinstance(raw.get("authToken"), str) and raw.get("authToken"):
+            provider = "freebuff"
+            access_token = raw["authToken"]
+            refresh_token_hash = hashlib.sha256(access_token.encode()).hexdigest()[:8]
+        elif (
+            isinstance(raw.get("default"), dict)
+            and isinstance(raw["default"].get("authToken"), str)
+            and raw["default"].get("authToken")
+        ):
+            provider = "freebuff"
+            access_token = raw["default"]["authToken"]
+            refresh_token_hash = hashlib.sha256(access_token.encode()).hexdigest()[:8]
+        else:
+            # Validate qwen-like credentials
+            if not raw.get("refresh_token") and not raw.get("access_token"):
+                return None
+            rt = raw.get("refresh_token", "")
+            access_token = raw.get("access_token", "")
+            expiry_date = raw.get("expiry_date", 0)
+            refresh_token_hash = hashlib.sha256(rt.encode()).hexdigest()[:8] if rt else ""
 
         state = AccountState(
             account_id=account_id,
             creds_file=path,
+            provider=provider,
             enabled=account_id not in self._explicitly_disabled,
-            access_token=raw.get("access_token", ""),
-            expiry_date=raw.get("expiry_date", 0),
-            refresh_token_hash=rt_hash,
+            access_token=access_token,
+            expiry_date=expiry_date,
+            refresh_token_hash=refresh_token_hash,
             _raw_creds=raw,
         )
 
-        if raw.get("expiry_date"):
+        if provider == "qwen" and raw.get("expiry_date"):
             dt = datetime.datetime.fromtimestamp(
                 raw["expiry_date"] / 1000, tz=datetime.timezone.utc
             )
@@ -351,6 +387,7 @@ class AccountPool:
             new_state.last_rate_limit_at = acct.last_rate_limit_at
             new_state.last_error = acct.last_error
             new_state.enabled = acct.enabled
+            new_state.provider = acct.provider
             # Preserve auth state across reloads
             new_state.last_auth_error = acct.last_auth_error
             new_state.last_refresh_success = acct.last_refresh_success
@@ -385,7 +422,11 @@ class AccountPool:
 
     # ── Selection (round-robin) ───────────────────────────────────
 
-    def select_account(self, exclude_ids: set[str] | None = None) -> AccountState | None:
+    def select_account(
+        self,
+        exclude_ids: set[str] | None = None,
+        provider: str | None = None,
+    ) -> AccountState | None:
         """Sequential round-robin selection starting from the last success.
         
         Prioritizes the account following the last successful one.
@@ -412,10 +453,11 @@ class AccountPool:
             a = self.accounts[aid]
             
             # Skip logic
+            if provider and a.provider != provider: continue
             if not a.enabled: continue
             if a.health_status == AccountHealthStatus.AUTH_ERROR: continue
             if a.is_cooldown: continue
-            if not a.refresh_token_hash: continue
+            if not a.has_credential: continue
             if exclude_ids and a.account_id in exclude_ids: continue
             
             return a

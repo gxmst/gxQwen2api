@@ -19,6 +19,7 @@ from ..auth import AuthManager
 from ..auto_refresher import AutoRefresher
 from ..config import settings
 from ..event_logger import event_logger
+from ..models import MODELS
 
 router = APIRouter(prefix="/admin")
 
@@ -141,6 +142,33 @@ async def api_logs(request: Request, limit: int = 100, _=Depends(get_admin_user)
     return event_logger.get_logs(limit=limit)
 
 
+@router.get("/api/models")
+async def api_models(request: Request, _=Depends(get_admin_user)) -> dict[str, Any]:
+    freebuff = request.app.state.freebuff
+    qwen_models = [m["id"] for m in MODELS if isinstance(m, dict) and "id" in m]
+    providers = [
+        {
+            "provider": "qwen",
+            "label": "Qwen OAuth",
+            "models": qwen_models,
+            "count": len(qwen_models),
+            "enabled_accounts": sum(1 for a in request.app.state.pool.all_accounts() if a.provider == "qwen" and a.enabled),
+        }
+    ]
+    if freebuff and freebuff.has_accounts():
+        models = freebuff.registry.models()
+        providers.append(
+            {
+                "provider": "freebuff",
+                "label": "Freebuff",
+                "models": models,
+                "count": len(models),
+                "enabled_accounts": sum(1 for a in request.app.state.pool.all_accounts() if a.provider == "freebuff" and a.enabled),
+            }
+        )
+    return {"providers": providers}
+
+
 @router.post("/api/scan")
 async def api_scan(request: Request, _=Depends(get_admin_user)) -> dict[str, str]:
     pool: AccountPool = request.app.state.pool
@@ -173,6 +201,8 @@ async def api_refresh(request: Request, account_id: str, _=Depends(get_admin_use
     acct = pool.get_account(account_id)
     if not acct:
         raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+    if acct.provider != "qwen":
+        raise HTTPException(status_code=400, detail=f"Provider {acct.provider} does not support refresh")
     if not acct._raw_creds or not acct._raw_creds.get("refresh_token"):
         raise HTTPException(status_code=400, detail="No refresh token for this account")
     # Use coordinated_refresh to avoid races with background/auto-refresh
@@ -200,6 +230,7 @@ async def api_verify(request: Request, account_id: str, _=Depends(get_admin_user
     pool: AccountPool = request.app.state.pool
     auth: AuthManager = request.app.state.auth
     client = request.app.state.http_client
+    freebuff = request.app.state.freebuff
 
     acct = pool.get_account(account_id)
     if not acct:
@@ -212,6 +243,17 @@ async def api_verify(request: Request, account_id: str, _=Depends(get_admin_user
             "detail": "No access token loaded",
             "valid": False,
             "error_type": "no_token",
+        }
+
+    if acct.provider == "freebuff":
+        return await freebuff.verify_account(acct)
+    if acct.provider != "qwen":
+        return {
+            "status": "unsupported",
+            "account_id": account_id,
+            "detail": f"Verify is not implemented for provider {acct.provider}",
+            "valid": None,
+            "error_type": "unsupported",
         }
 
     # Try a simple API call to verify
@@ -309,7 +351,6 @@ async def api_auto_refresh_run(request: Request, _=Depends(get_admin_user)) -> d
 # ── Upload credential ────────────────────────────────────────────
 
 _MAX_UPLOAD_BYTES = 64 * 1024  # 64 KB
-_REQUIRED_KEYS = {"refresh_token"}  # Must have at minimum this key
 
 # Sanitize: allow alphanumeric, dash, underscore, dot. Strip path separators.
 _FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.json$")
@@ -333,6 +374,16 @@ def _get_unique_path(base_dir: Path, name: str) -> tuple[Path, str]:
         if not new_p.exists():
             return new_p, "renamed"
         counter += 1
+
+
+def _detect_credential_provider(data: dict[str, Any]) -> str | None:
+    if isinstance(data.get("authToken"), str) and data.get("authToken"):
+        return "freebuff"
+    if isinstance(data.get("default"), dict) and isinstance(data["default"].get("authToken"), str) and data["default"].get("authToken"):
+        return "freebuff"
+    if data.get("refresh_token") or data.get("access_token"):
+        return "qwen"
+    return None
 
 
 @router.post("/api/upload")
@@ -365,23 +416,28 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="JSON must be an object.")
 
-    # 4. Validate it looks like Qwen creds
-    missing = _REQUIRED_KEYS - set(data.keys())
-    if missing:
+    # 4. Detect provider and normalize defaults
+    provider = _detect_credential_provider(data)
+    if provider is None:
         raise HTTPException(
             status_code=400,
-            detail=f"Missing required keys: {', '.join(sorted(missing))}. Expected a Qwen OAuth credential file.",
+            detail=(
+                "Unsupported credential file. Expected Qwen OAuth "
+                "(refresh_token/access_token) or Freebuff credentials (authToken)."
+            ),
         )
 
     # 5. Ensure sensible defaults
-    data.setdefault("access_token", "")
-    data.setdefault("token_type", "Bearer")
-    data.setdefault("resource_url", "https://portal.qwen.ai/v1")
-    if not data.get("expiry_date"):
-        data["expiry_date"] = int(time.time() * 1000) + 7 * 24 * 3600 * 1000  # 7 days
+    if provider == "qwen":
+        data.setdefault("access_token", "")
+        data.setdefault("token_type", "Bearer")
+        data.setdefault("resource_url", "https://portal.qwen.ai/v1")
+        if not data.get("expiry_date"):
+            data["expiry_date"] = int(time.time() * 1000) + 7 * 24 * 3600 * 1000  # 7 days
 
     # 6. Find unique filename
     pool: AccountPool = request.app.state.pool
+    settings.creds_dir.mkdir(parents=True, exist_ok=True)
     target, action = _get_unique_path(settings.creds_dir, name)
     write_succeeded = True
     try:
@@ -408,15 +464,20 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
         state = pool._try_load_account(account_id, target)
     else:
         # Create an in-memory account from the uploaded data
-        rt = data.get("refresh_token", "")
-        rt_hash = hashlib.sha256(rt.encode()).hexdigest()[:8] if rt else ""
+        qwen_rt = data.get("refresh_token", "")
+        freebuff_token = str(data.get("authToken") or data.get("default", {}).get("authToken", ""))
         state = AccountState(
             account_id=account_id,
             creds_file=target,
+            provider=provider,
             enabled=True,
-            access_token=data.get("access_token", ""),
-            expiry_date=data.get("expiry_date", 0),
-            refresh_token_hash=rt_hash,
+            access_token=data.get("access_token", "") if provider == "qwen" else freebuff_token,
+            expiry_date=data.get("expiry_date", 0) if provider == "qwen" else 0,
+            refresh_token_hash=(
+                hashlib.sha256(qwen_rt.encode()).hexdigest()[:8]
+                if provider == "qwen" and qwen_rt
+                else hashlib.sha256(freebuff_token.encode()).hexdigest()[:8] if freebuff_token else ""
+            ),
             last_write_persisted=False,
             last_write_error="Permission denied or write failed during upload",
             _raw_creds=data,

@@ -18,6 +18,7 @@ from .auth import AuthManager
 from .auto_refresher import AutoRefresher
 from .config import settings
 from .event_logger import event_logger
+from .providers import FreebuffProvider
 from .routes import chat, health, models as models_router
 
 # ── Basic logging setup ──────────────────────────────────────────
@@ -34,6 +35,8 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    settings.creds_dir.mkdir(parents=True, exist_ok=True)
+
     # Build account pool
     pool = AccountPool()
     pool.scan()
@@ -49,6 +52,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _app.state.request_count = 0
     _app.state.session_id = str(uuid.uuid4())
     _app.state.start_time = time.time()
+    _app.state.freebuff = FreebuffProvider(pool, _app.state.http_client)
+    await _app.state.freebuff.start()
 
     # Start auto-refresher background task
     auto_refresher = AutoRefresher(pool, _app.state.auth, _app.state.http_client)
@@ -86,6 +91,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Shutdown auto-refresher
     await _app.state.auto_refresher.stop()
+    await _app.state.freebuff.stop()
 
     event_logger.shutdown("Server stopping")
     await _app.state.http_client.aclose()

@@ -145,6 +145,7 @@ async def api_logs(request: Request, limit: int = 100, _=Depends(get_admin_user)
 @router.get("/api/models")
 async def api_models(request: Request, _=Depends(get_admin_user)) -> dict[str, Any]:
     freebuff = request.app.state.freebuff
+    deepseek = getattr(request.app.state, "deepseek", None)
     qwen_models = [m["id"] for m in MODELS if isinstance(m, dict) and "id" in m]
     providers = [
         {
@@ -164,6 +165,16 @@ async def api_models(request: Request, _=Depends(get_admin_user)) -> dict[str, A
                 "models": models,
                 "count": len(models),
                 "enabled_accounts": sum(1 for a in request.app.state.pool.all_accounts() if a.provider == "freebuff" and a.enabled),
+            }
+        )
+    if deepseek and deepseek.has_accounts():
+        providers.append(
+            {
+                "provider": "deepseek",
+                "label": "DeepSeek",
+                "models": ["deepseek-flash", "deepseek-pro"],
+                "count": 2,
+                "enabled_accounts": sum(1 for a in request.app.state.pool.all_accounts() if a.provider == "deepseek" and a.enabled),
             }
         )
     return {"providers": providers}
@@ -247,6 +258,17 @@ async def api_verify(request: Request, account_id: str, _=Depends(get_admin_user
 
     if acct.provider == "freebuff":
         return await freebuff.verify_account(acct)
+    if acct.provider == "deepseek":
+        deepseek = getattr(request.app.state, "deepseek", None)
+        if deepseek:
+            return await deepseek.verify_account(acct)
+        return {
+            "status": "failed",
+            "account_id": account_id,
+            "detail": "DeepSeek provider not initialized",
+            "valid": False,
+            "error_type": "runtime_error",
+        }
     if acct.provider != "qwen":
         return {
             "status": "unsupported",
@@ -330,6 +352,194 @@ async def api_clear_logs(request: Request, _=Depends(get_admin_user)) -> dict[st
     return {"status": "ok"}
 
 
+# ── DeepSeek account management ─────────────────────────────
+
+@router.post("/api/deepseek/add")
+async def api_deepseek_add(
+    request: Request,
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    """Add a new DeepSeek account (email/password) to a JSON file."""
+    body = await request.json()
+    email = str(body.get("email", "")).strip()
+    password = str(body.get("password", "")).strip()
+    mobile = str(body.get("mobile", "")).strip()
+    area_code = str(body.get("area_code", "")).strip()
+    account_id = str(body.get("account_id", "")).strip()
+
+    if not password:
+        raise HTTPException(status_code=400, detail="password is required")
+    if not email and not mobile:
+        raise HTTPException(status_code=400, detail="email or mobile is required")
+    if mobile and not area_code:
+        raise HTTPException(status_code=400, detail="area_code is required when using mobile login")
+    if not account_id:
+        account_id = email.split("@")[0] if email else mobile
+    if not re.match(r"^[A-Za-z0-9_-]+$", account_id):
+        raise HTTPException(status_code=400, detail="account_id must be alphanumeric with dashes/underscores")
+
+    settings.creds_dir.mkdir(parents=True, exist_ok=True)
+    target = settings.creds_dir / f"{account_id}.json"
+
+    data = {
+        "email": email,
+        "password": password,
+        "mobile": mobile,
+        "area_code": area_code,
+        "access_token": "",
+        "refresh_token": "",
+    }
+
+    action = "new"
+    if target.exists():
+        action = "overwrite"
+        try:
+            existing = json.loads(target.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                data["access_token"] = existing.get("access_token", "")
+                data["refresh_token"] = existing.get("refresh_token", "")
+        except Exception:
+            pass
+
+    try:
+        target.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to write file: {exc}")
+
+    pool: AccountPool = request.app.state.pool
+    pool.scan()
+
+    return {"status": "ok", "account_id": account_id, "action": action}
+
+
+@router.post("/api/deepseek/delete/{account_id}")
+async def api_deepseek_delete(
+    request: Request,
+    account_id: str,
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    """Delete a DeepSeek account file and remove from pool."""
+    pool: AccountPool = request.app.state.pool
+    acct = pool.get_account(account_id)
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if acct.provider != "deepseek":
+        raise HTTPException(status_code=400, detail="Not a DeepSeek account")
+
+    # Clean up runtime before removing from pool
+    deepseek = getattr(request.app.state, "deepseek", None)
+    if deepseek:
+        deepseek.remove_account_runtime(account_id)
+
+    try:
+        if acct.creds_file.exists():
+            acct.creds_file.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {exc}")
+
+    pool.accounts.pop(account_id, None)
+    return {"status": "ok", "account_id": account_id}
+
+
+@router.post("/api/deepseek/update/{account_id}")
+async def api_deepseek_update(
+    request: Request,
+    account_id: str,
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    """Update DeepSeek account password or email."""
+    pool: AccountPool = request.app.state.pool
+    acct = pool.get_account(account_id)
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if acct.provider != "deepseek":
+        raise HTTPException(status_code=400, detail="Not a DeepSeek account")
+
+    body = await request.json()
+    new_email = body.get("email")
+    new_password = body.get("password")
+    new_mobile = body.get("mobile")
+    new_area_code = body.get("area_code")
+
+    if new_email is None and new_password is None and new_mobile is None and new_area_code is None:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+
+    try:
+        raw = json.loads(acct.creds_file.read_text(encoding="utf-8"))
+    except Exception:
+        raw = {}
+
+    if isinstance(raw, dict):
+        if new_email is not None:
+            raw["email"] = str(new_email).strip()
+        if new_password is not None:
+            raw["password"] = str(new_password).strip()
+        if new_mobile is not None:
+            raw["mobile"] = str(new_mobile).strip()
+        if new_area_code is not None:
+            raw["area_code"] = str(new_area_code).strip()
+        try:
+            acct.creds_file.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to write file: {exc}")
+        pool.reload_account(account_id)
+        return {"status": "ok", "account_id": account_id}
+
+    raise HTTPException(status_code=500, detail="Invalid credential file format")
+
+
+@router.post("/api/deepseek/login/{account_id}")
+async def api_deepseek_login(
+    request: Request,
+    account_id: str,
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    """Trigger immediate login for a DeepSeek account."""
+    pool: AccountPool = request.app.state.pool
+    acct = pool.get_account(account_id)
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if acct.provider != "deepseek":
+        raise HTTPException(status_code=400, detail="Not a DeepSeek account")
+
+    deepseek = getattr(request.app.state, "deepseek", None)
+    if not deepseek:
+        raise HTTPException(status_code=500, detail="DeepSeek provider not initialized")
+
+    runtime = await deepseek._get_runtime(account_id)
+    if not runtime:
+        raise HTTPException(status_code=500, detail="Runtime not found")
+
+    from ..providers.deepseek.auth import login
+
+    result = await login(
+        request.app.state.http_client,
+        email=runtime.account.email,
+        password=runtime.account.password,
+        mobile=runtime.account.mobile,
+        area_code=runtime.account.area_code,
+    )
+    if result:
+        runtime.account.access_token = result["token"]
+        runtime.account.refresh_token = result.get("refresh_token", "")
+        runtime.account.last_login_at = time.time()
+        runtime.account.last_error = None
+        # Sync back to pool
+        acct.access_token = runtime.account.access_token
+        acct.refresh_token = runtime.account.refresh_token
+        # Persist to file
+        try:
+            raw = json.loads(acct.creds_file.read_text(encoding="utf-8"))
+            raw["access_token"] = runtime.account.access_token
+            raw["refresh_token"] = runtime.account.refresh_token
+            acct.creds_file.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return {"status": "ok", "account_id": account_id, "detail": "Login succeeded"}
+    else:
+        return {"status": "failed", "account_id": account_id, "detail": "Login failed"}
+
+
 # ── Auto-refresh ────────────────────────────────────────────
 
 @router.get("/api/auto-refresh/status")
@@ -381,6 +591,8 @@ def _detect_credential_provider(data: dict[str, Any]) -> str | None:
         return "freebuff"
     if isinstance(data.get("default"), dict) and isinstance(data["default"].get("authToken"), str) and data["default"].get("authToken"):
         return "freebuff"
+    if isinstance(data.get("email"), str) and data.get("email") and isinstance(data.get("password"), str) and data.get("password"):
+        return "deepseek"
     if data.get("refresh_token") or data.get("access_token"):
         return "qwen"
     return None
@@ -423,7 +635,8 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
             status_code=400,
             detail=(
                 "Unsupported credential file. Expected Qwen OAuth "
-                "(refresh_token/access_token) or Freebuff credentials (authToken)."
+                "(refresh_token/access_token), Freebuff credentials (authToken), "
+                "or DeepSeek credentials (email/password)."
             ),
         )
 
@@ -434,6 +647,9 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
         data.setdefault("resource_url", "https://portal.qwen.ai/v1")
         if not data.get("expiry_date"):
             data["expiry_date"] = int(time.time() * 1000) + 7 * 24 * 3600 * 1000  # 7 days
+    elif provider == "deepseek":
+        data.setdefault("access_token", "")
+        data.setdefault("refresh_token", "")
 
     # 6. Find unique filename
     pool: AccountPool = request.app.state.pool
@@ -466,18 +682,22 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
         # Create an in-memory account from the uploaded data
         qwen_rt = data.get("refresh_token", "")
         freebuff_token = str(data.get("authToken") or data.get("default", {}).get("authToken", ""))
+        ds_email = data.get("email", "")
+        ds_password = data.get("password", "")
         state = AccountState(
             account_id=account_id,
             creds_file=target,
             provider=provider,
             enabled=True,
-            access_token=data.get("access_token", "") if provider == "qwen" else freebuff_token,
+            access_token=data.get("access_token", "") if provider in ("qwen", "deepseek") else freebuff_token,
             expiry_date=data.get("expiry_date", 0) if provider == "qwen" else 0,
             refresh_token_hash=(
                 hashlib.sha256(qwen_rt.encode()).hexdigest()[:8]
                 if provider == "qwen" and qwen_rt
                 else hashlib.sha256(freebuff_token.encode()).hexdigest()[:8] if freebuff_token else ""
             ),
+            email=ds_email,
+            password=ds_password,
             last_write_persisted=False,
             last_write_error="Permission denied or write failed during upload",
             _raw_creds=data,

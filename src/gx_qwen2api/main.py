@@ -18,7 +18,7 @@ from .auth import AuthManager
 from .auto_refresher import AutoRefresher
 from .config import settings
 from .event_logger import event_logger
-from .providers import FreebuffProvider
+from .providers import DeepseekProvider, FreebuffProvider
 from .routes import chat, health, models as models_router
 
 # ── Basic logging setup ──────────────────────────────────────────
@@ -54,6 +54,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _app.state.start_time = time.time()
     _app.state.freebuff = FreebuffProvider(pool, _app.state.http_client)
     await _app.state.freebuff.start()
+
+    _app.state.deepseek = DeepseekProvider(pool, _app.state.http_client)
+    await _app.state.deepseek.start()
 
     # Start auto-refresher background task
     auto_refresher = AutoRefresher(pool, _app.state.auth, _app.state.http_client)
@@ -92,6 +95,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Shutdown auto-refresher
     await _app.state.auto_refresher.stop()
     await _app.state.freebuff.stop()
+    await _app.state.deepseek.stop()
 
     event_logger.shutdown("Server stopping")
     await _app.state.http_client.aclose()

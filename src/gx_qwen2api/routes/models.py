@@ -22,4 +22,10 @@ async def list_models(
         for model in freebuff.list_models_payload():
             if model["id"] not in existing:
                 data.append(model)
+    deepseek = getattr(request.app.state, "deepseek", None)
+    if deepseek and deepseek.has_accounts():
+        existing = {m["id"] for m in data if isinstance(m, dict) and "id" in m}
+        for model in deepseek.list_models_payload():
+            if model["id"] not in existing:
+                data.append(model)
     return {"object": "list", "data": data}

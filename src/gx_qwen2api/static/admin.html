@@ -49,6 +49,7 @@ a { color: var(--accent); }
 .provider-group { border: 2px solid var(--border); border-radius: 10px; padding: 12px; background: rgba(255,255,255,0.01); }
 .provider-group.provider-qwen { border-color: #1f6feb88; }
 .provider-group.provider-freebuff { border-color: #3fb95088; }
+.provider-group.provider-deepseek { border-color: #bc8cff88; }
 .provider-group-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
 .provider-group-title { font-size: 0.95rem; font-weight: 700; }
 .provider-group-meta { color: var(--muted); font-size: 0.76rem; }
@@ -189,6 +190,7 @@ a { color: var(--accent); }
       <button class="btn btn-green" onclick="doAction('/admin/api/scan', 'scan')" data-i18n="btn_scan">📁 扫描凭证目录</button>
       <button class="btn" onclick="doAction('/admin/api/reload-all', 'reload_all')" data-i18n="btn_reload_all">🔄 重载全部</button>
       <button class="btn btn-orange" onclick="runAutoRefreshNow()" data-i18n="btn_auto_refresh_now">⚡ 立即预刷新</button>
+      <button class="btn btn-purple" onclick="showDeepseekAddDialog()" data-i18n="btn_add_deepseek">➕ 添加 DeepSeek</button>
     </div>
     <div class="topbar-right">
       <div id="loginStatus" class="login-status" style="display:none">
@@ -386,8 +388,22 @@ const i18n = {
     reason_quota_exhausted: '额度已用尽（预计 {seconds} 秒后重试）：{error}',
     reason_disabled: '账号已禁用',
     reason_no_token: '未加载 Access Token',
+    reason_no_credentials: '未配置邮箱/密码',
     provider_qwen: 'Qwen OAuth',
     provider_freebuff: 'Freebuff',
+    provider_deepseek: 'DeepSeek',
+    btn_add_deepseek: '➕ 添加 DeepSeek',
+    ds_add_title: '添加 DeepSeek 账号',
+    ds_email_label: '邮箱（可选）',
+    ds_mobile_label: '手机号（可选）',
+    ds_area_code_label: '区号 如+86',
+    ds_password_label: '密码',
+    ds_account_id_label: '账号ID（留空自动生成）',
+    ds_add_submit: '添加',
+    ds_delete: '删除账号',
+    ds_login: '立即登录',
+    ds_update: '更新密码',
+    confirm_delete_ds: '确定要删除 DeepSeek 账号 {id} 吗？此操作不可撤销。',
   },
   en: {
     title: 'gxQwen2api — Dashboard',
@@ -512,8 +528,22 @@ const i18n = {
     reason_quota_exhausted: 'Quota exhausted ({seconds}s remaining): {error}',
     reason_disabled: 'Account disabled',
     reason_no_token: 'No access token loaded',
+    reason_no_credentials: 'No email/password configured',
     provider_qwen: 'Qwen OAuth',
     provider_freebuff: 'Freebuff',
+    provider_deepseek: 'DeepSeek',
+    btn_add_deepseek: '➕ Add DeepSeek',
+    ds_add_title: 'Add DeepSeek Account',
+    ds_email_label: 'Email (optional)',
+    ds_mobile_label: 'Mobile (optional)',
+    ds_area_code_label: 'Area code e.g. +86',
+    ds_password_label: 'Password',
+    ds_account_id_label: 'Account ID (auto-generated if empty)',
+    ds_add_submit: 'Add',
+    ds_delete: 'Delete Account',
+    ds_login: 'Login Now',
+    ds_update: 'Update Password',
+    confirm_delete_ds: 'Are you sure you want to delete DeepSeek account {id}? This cannot be undone.',
   }
 };
 
@@ -781,6 +811,7 @@ function renderAccounts(accounts, health) {
     const providerKey = `provider_${(a.provider || 'qwen').toLowerCase()}`;
     const providerLabel = t(providerKey) || a.provider || 'qwen';
     const supportsRefresh = (a.provider || 'qwen') === 'qwen';
+    const isDeepseek = (a.provider || '') === 'deepseek';
 
     return `
       <div class="card ${statusClass}" data-account="${escAttr(a.account_id)}" ${a.cooldown_until ? `data-cooldown="${a.cooldown_until}"` : ''}>
@@ -828,6 +859,8 @@ function renderAccounts(accounts, health) {
           <button class="btn btn-sm btn-purple" onclick="doVerify('${escAttr(a.account_id)}')">${t('btn_verify')}</button>
           ${supportsRefresh ? `<button class="btn btn-sm btn-blue" onclick="doAccount('refresh','${escAttr(a.account_id)}')">${t('btn_force_refresh')}</button>` : ''}
           <button class="btn btn-sm" onclick="doAccount('reload','${escAttr(a.account_id)}')">${t('btn_reload_file')}</button>
+          ${isDeepseek ? `<button class="btn btn-sm btn-blue" onclick="doDeepseekLogin('${escAttr(a.account_id)}')">${t('ds_login')}</button>` : ''}
+          ${isDeepseek ? `<button class="btn btn-sm btn-red" onclick="confirmDeleteDeepseek('${escAttr(a.account_id)}')">${t('ds_delete')}</button>` : ''}
         </div>
       </div>`;
   };
@@ -1138,6 +1171,93 @@ function showConfirmDialog(message, onConfirm) {
     await onConfirm();
   };
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+
+// ── DeepSeek management ───────────────────────────────────────
+function showDeepseekAddDialog() {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.innerHTML = `
+    <div class="confirm-dialog" style="max-width:420px">
+      <h3>${t('ds_add_title')}</h3>
+      <div style="margin:12px 0">
+        <input type="email" id="ds-email" placeholder="${t('ds_email_label')}" style="width:100%;padding:8px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input type="text" id="ds-area-code" placeholder="${t('ds_area_code_label')}" style="width:30%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+          <input type="text" id="ds-mobile" placeholder="${t('ds_mobile_label')}" style="width:70%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+        </div>
+        <input type="password" id="ds-password" placeholder="${t('ds_password_label')}" style="width:100%;padding:8px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+        <input type="text" id="ds-account-id" placeholder="${t('ds_account_id_label')}" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+      </div>
+      <div class="btn-group">
+        <button class="btn" id="ds-cancel">${t('cancel')}</button>
+        <button class="btn btn-green" id="ds-submit">${t('ds_add_submit')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#ds-cancel').onclick = () => overlay.remove();
+  overlay.querySelector('#ds-submit').onclick = async () => {
+    const email = document.getElementById('ds-email').value.trim();
+    const password = document.getElementById('ds-password').value.trim();
+    const mobile = document.getElementById('ds-mobile').value.trim();
+    const areaCode = document.getElementById('ds-area-code').value.trim();
+    const accountId = document.getElementById('ds-account-id').value.trim();
+    if (!email && !mobile) {
+      showToast('Email or mobile is required', 'error');
+      return;
+    }
+    if (!password) {
+      showToast('Password is required', 'error');
+      return;
+    }
+    if (mobile && !areaCode) {
+      showToast('Area code is required when using mobile', 'error');
+      return;
+    }
+    overlay.remove();
+    try {
+      const res = await fetch('/admin/api/deepseek/add', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email, password, mobile, area_code: areaCode, account_id: accountId}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Add failed');
+      showToast(`${t('ds_add_submit')} — ${data.account_id}`, 'success');
+      await loadAccounts();
+    } catch (e) {
+      showToast(`Add DeepSeek error: ${e.message}`, 'error');
+    }
+  };
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+
+function confirmDeleteDeepseek(accountId) {
+  const msg = t('confirm_delete_ds').replace('{id}', accountId);
+  showConfirmDialog(msg, async () => {
+    try {
+      const res = await fetch(`/admin/api/deepseek/delete/${encodeURIComponent(accountId)}`, {method: 'POST'});
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Delete failed');
+      showToast(`Deleted — ${accountId}`, 'success');
+      await loadAccounts();
+    } catch (e) {
+      showToast(`Delete error: ${e.message}`, 'error');
+    }
+  });
+}
+
+async function doDeepseekLogin(accountId) {
+  try {
+    const res = await fetch(`/admin/api/deepseek/login/${encodeURIComponent(accountId)}`, {method: 'POST'});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Login failed');
+    showToast(`${data.detail} — ${accountId}`, data.status === 'ok' ? 'success' : 'error');
+    await loadAccounts();
+  } catch (e) {
+    showToast(`Login error: ${e.message}`, 'error');
+  }
 }
 
 // ── Toast ───────────────────────────────────────────────────────

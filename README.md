@@ -1,6 +1,6 @@
 # gxQwen2api
 
-一个带管理面板的 OpenAI 兼容代理壳子。项目最初面向 Qwen OAuth，多账号池、凭证热重载、健康状态机和后台面板都已做完；当前也接入了实验性的 Freebuff / Codebuff 渠道。
+一个带管理面板的 OpenAI 兼容代理壳子。项目最初面向 Qwen OAuth，多账号池、凭证热重载、健康状态机和后台面板都已做完；当前接入了 DeepSeek Web 和 Freebuff / Codebuff 渠道。
 
 > [!IMPORTANT]
 > `Qwen OAuth` 免费额度已停用，Qwen 渠道目前仅保留为兼容旧凭证与实验用途，不再建议作为主链路依赖。
@@ -8,7 +8,7 @@
 ## 特性
 
 - **多账号池** — 自动扫描凭证目录下所有 `*.json` 凭证文件，注册为独立账号
-- **多渠道账号分组** — 管理面板按 Provider 分组显示，Qwen / Freebuff 使用不同边框颜色区分
+- **多渠道账号分组** — 管理面板按 Provider 分组显示，Qwen / Freebuff / DeepSeek 使用不同边框颜色区分
 - **精准账号状态** — 不再仅依赖过期时间，实时追踪认证错误、刷新失败、冷却等状态
 - **Token 校验** — 管理面板提供"校验"按钮，手动验证账号当前是否真实可用
 - **自动预刷新** — 后台定期扫描，在 token 到期前自动续期，无需等待用户请求
@@ -37,6 +37,7 @@ mkdir -p data/creds
 
 - `Qwen OAuth`：先在宿主机执行 `qwen login`，再把生成的 `oauth_creds.json` 放进 `data/creds/`
 - `Freebuff / Codebuff`：把本地 CLI 生成的 `auth-tokens.json` 或单个 `authToken` JSON 放进 `data/creds/`
+- `DeepSeek Web`：在 `data/creds/` 下创建 JSON 文件，格式为 `{"email": "...", "password": "..."}`
 
 2. 复制配置文件：
 
@@ -103,7 +104,7 @@ uv run python -m gx_qwen2api.main
 浏览器打开 `http://localhost:31998/admin/`：
 
 - 所有账号的 token 状态、过期时间、错误数
-- **Provider 分组** — Qwen / Freebuff 账号分开展示，使用不同颜色边框区分
+- **Provider 分组** — Qwen / Freebuff / DeepSeek 账号分开展示，使用不同颜色边框区分
 - **多语言切换** — 默认中文，右上角一键切换英文（语言偏好保存到 localStorage）
 - **启用 / 禁用** 单个账号（禁用时有确认对话框）
 - **强制刷新** 单个账号的 token
@@ -146,6 +147,22 @@ uv run python -m gx_qwen2api.main
   account2.json          ← 第二账号
   service-bot.json       ← 服务账号
 ```
+
+### DeepSeek Web 凭证格式
+
+在凭证目录下创建任意 `.json` 文件：
+
+```json
+{
+  "email": "your-email@example.com",
+  "password": "your-password"
+}
+```
+
+- 启动时会自动识别 `email` + `password` 字段并注册为 DeepSeek 账号
+- 首次请求时会自动执行登录流程（含 PoW 挑战）获取 access_token
+- 登录成功后 token 会自动写回凭证文件持久化
+- 支持管理面板直接添加/删除/登录 DeepSeek 账号
 
 ### Qwen OAuth 凭证格式
 
@@ -329,7 +346,7 @@ src/gx_qwen2api/
   config.py            — Pydantic 配置
   account_pool.py      — 多账号池：扫描、选择、mtime 重载、启用/禁用
   auth.py              — OAuth 刷新，带详细调试日志
-  providers/           — Provider 适配层（Qwen / Freebuff）
+  providers/           — Provider 适配层（Qwen / Freebuff / DeepSeek）
   event_logger.py      — 环形缓冲事件日志（200 条上限）
   message_transform.py  — cache_control + 自定义 system prompt 注入
   models.py            — 模型别名、错误分类

@@ -47,6 +47,11 @@ class AccountState:
     access_token: str = ""
     expiry_date: int = 0
     refresh_token_hash: str = ""
+    # DeepSeek credentials
+    email: str = ""
+    password: str = ""
+    mobile: str = ""
+    area_code: str = ""
     # Health
     error_count: int = 0
     cooldown_until: float = 0.0
@@ -84,6 +89,8 @@ class AccountState:
     def token_valid(self) -> bool:
         if self.provider == "freebuff":
             return bool(self.access_token)
+        if self.provider == "deepseek":
+            return bool(self.access_token) or ((bool(self.email) or bool(self.mobile)) and bool(self.password))
         if not self.access_token or not self.expiry_date:
             return False
         return (
@@ -142,6 +149,19 @@ class AccountState:
             self.status_reason = "reason_valid" if self.access_token else "reason_no_token"
             self.status_reason_params = {}
             return AccountHealthStatus.VALID if self.access_token else AccountHealthStatus.NO_TOKEN
+
+        if self.provider == "deepseek":
+            if self.access_token:
+                self.status_reason = "reason_valid"
+                self.status_reason_params = {}
+                return AccountHealthStatus.VALID
+            if (self.email or self.mobile) and self.password:
+                self.status_reason = "reason_no_token"
+                self.status_reason_params = {}
+                return AccountHealthStatus.NO_TOKEN
+            self.status_reason = "reason_no_credentials"
+            self.status_reason_params = {}
+            return AccountHealthStatus.NO_TOKEN
 
         if not self.access_token or not self.expiry_date:
             self.status_reason = "reason_no_token"
@@ -266,6 +286,7 @@ class AccountState:
             "last_write_error": self.last_write_error or None,
             "has_refresh_token": bool(self._raw_creds and self._raw_creds.get("refresh_token")),
             "has_credential": self.has_credential,
+            "email": self.email or None,
             "rate_limit_count": self.rate_limit_count,
             "last_rate_limit_at": self.last_rate_limit_at or None,
             "last_success_at": self.last_success_at or None,
@@ -381,6 +402,11 @@ class AccountPool:
         expiry_date = 0
         refresh_token_hash = ""
 
+        email = ""
+        password = ""
+        mobile = ""
+        area_code = ""
+
         # Freebuff / Codebuff local credentials
         if isinstance(raw.get("authToken"), str) and raw.get("authToken"):
             provider = "freebuff"
@@ -394,6 +420,15 @@ class AccountPool:
             provider = "freebuff"
             access_token = raw["default"]["authToken"]
             refresh_token_hash = hashlib.sha256(access_token.encode()).hexdigest()[:8]
+        elif (isinstance(raw.get("email"), str) and raw.get("email") and isinstance(raw.get("password"), str) and raw.get("password")) or (isinstance(raw.get("mobile"), str) and raw.get("mobile") and isinstance(raw.get("password"), str) and raw.get("password")):
+            # DeepSeek email/password or mobile/password credentials
+            provider = "deepseek"
+            email = raw.get("email", "")
+            password = raw.get("password", "")
+            mobile = raw.get("mobile", "")
+            area_code = raw.get("area_code", "")
+            access_token = raw.get("access_token", "")
+            refresh_token_hash = hashlib.sha256(password.encode()).hexdigest()[:8]
         else:
             # Validate qwen-like credentials
             if not raw.get("refresh_token") and not raw.get("access_token"):
@@ -412,6 +447,10 @@ class AccountPool:
             access_token=access_token,
             expiry_date=expiry_date,
             refresh_token_hash=refresh_token_hash,
+            email=email,
+            password=password,
+            mobile=mobile,
+            area_code=area_code,
             _raw_creds=raw,
         )
 

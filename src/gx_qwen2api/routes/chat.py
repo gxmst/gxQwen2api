@@ -89,6 +89,19 @@ async def chat_completions(
             logger.exception(f"Unhandled error in freebuff chat_completions: {e}")
             return JSONResponse(status_code=500, content=make_error_response(str(e), "api_error"))
 
+    deepseek = getattr(request.app.state, "deepseek", None)
+    if deepseek and deepseek.can_handle_model(model):
+        payload = dict(body)
+        payload["model"] = model
+        payload["max_tokens"] = max_tokens
+        chat_req = ChatCompletionRequest(**payload)
+        request_id = str(uuid.uuid4())
+        try:
+            return await deepseek.chat_completions(chat_req, request_id)
+        except Exception as e:
+            logger.exception(f"Unhandled error in deepseek chat_completions: {e}")
+            return JSONResponse(status_code=500, content=make_error_response(str(e), "api_error"))
+
     request_id = str(uuid.uuid4())
     messages = body.get("messages", [])
     messages = transform_messages(messages, model, streaming=is_streaming)

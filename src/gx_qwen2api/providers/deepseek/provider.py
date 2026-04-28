@@ -42,6 +42,11 @@ from .models import (
     openai_model_id,
 )
 from .pow import get_solver, solve_pow_challenge
+from .tool_calls import (
+    ToolCallStreamSieve,
+    build_prompt_with_tools,
+    parse_tool_calls_from_text,
+)
 
 logger = logging.getLogger("gx_qwen2api.deepseek.provider")
 
@@ -266,6 +271,7 @@ def _make_openai_chunk(
     reasoning_content: str | None = None,
     finish_reason: str | None = None,
     usage: dict[str, int] | None = None,
+    tool_call_delta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     delta: dict[str, Any] = {}
     if role is not None:
@@ -274,6 +280,8 @@ def _make_openai_chunk(
         delta["content"] = content
     if reasoning_content is not None:
         delta["reasoning_content"] = reasoning_content
+    if tool_call_delta is not None:
+        delta["tool_calls"] = [tool_call_delta]
 
     chunk: dict[str, Any] = {
         "id": request_id,
@@ -291,6 +299,16 @@ def _make_openai_chunk(
     if usage is not None:
         chunk["usage"] = usage
     return chunk
+
+
+def _chunk_has_tool_calls(chunk: dict[str, Any]) -> bool:
+    """Check if an OpenAI chunk dict contains tool_calls in its delta."""
+    choices = chunk.get("choices", [])
+    if choices:
+        delta = choices[0].get("delta", {})
+        if delta.get("tool_calls"):
+            return True
+    return False
 
 
 def ds_frames_to_openai_chunks(
@@ -540,7 +558,9 @@ class DeepseekProvider:
         thinking_enabled = request.enable_thinking if request.enable_thinking is not None else False
         search_enabled = False
 
-        prompt = self._build_prompt(request.messages)
+        tools = request.tools
+        tool_names = [t.get("function", {}).get("name", "") for t in (tools or []) if t.get("function", {}).get("name")] if tools else None
+        prompt = build_prompt_with_tools(request.messages, tools)
 
         tried_accounts: set[str] = set()
         auth_retried_accounts: set[str] = set()
@@ -603,11 +623,13 @@ class DeepseekProvider:
                 if request.stream:
                     return await self._create_streaming_response(
                         resp, acct_state, request_id, runtime, session_id, requested_model,
+                        tools, tool_names,
                     )
 
                 try:
                     return await self._create_nonstream_response(
                         resp, acct_state, request_id, runtime, session_id, requested_model,
+                        tools, tool_names,
                     )
                 finally:
                     await self._delete_session(runtime, session_id)
@@ -765,20 +787,64 @@ class DeepseekProvider:
     # Prompt building
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, messages: list[dict[str, Any]]) -> str:
-        parts: list[str] = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role == "system":
-                parts.append(f"[System]\n{content}")
-            elif role == "user":
-                parts.append(f"[User]\n{content}")
-            elif role == "assistant":
-                parts.append(f"[Assistant]\n{content}")
-            else:
-                parts.append(f"[{role}]\n{content}")
-        return "\n\n".join(parts)
+    def _build_prompt(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> str:
+        return build_prompt_with_tools(messages, tools)
+
+    def _process_stream_frames_with_sieve(
+        self,
+        frames: list[DsFrame],
+        model: str,
+        request_id: str,
+        sieve: ToolCallStreamSieve,
+    ) -> list[dict[str, Any]]:
+        """Feed DsFrame content through the ToolCallStreamSieve and convert to OpenAI chunks."""
+        chunks: list[dict[str, Any]] = []
+        finished = False
+        usage_value: int | None = None
+
+        for frame in frames:
+            if finished and frame.kind not in ("usage",):
+                continue
+
+            if frame.kind == "role":
+                chunks.append(_make_openai_chunk(model, request_id, role="assistant"))
+
+            elif frame.kind == "think_delta":
+                feed = sieve.feed(frame.value)
+                if feed.content:
+                    chunks.append(_make_openai_chunk(model, request_id, reasoning_content=feed.content))
+                for delta in feed.tool_call_chunks:
+                    chunks.append(_make_openai_chunk(model, request_id, tool_call_delta=delta))
+
+            elif frame.kind == "content_delta":
+                feed = sieve.feed(frame.value)
+                if feed.content:
+                    chunks.append(_make_openai_chunk(model, request_id, content=feed.content))
+                for delta in feed.tool_call_chunks:
+                    chunks.append(_make_openai_chunk(model, request_id, tool_call_delta=delta))
+
+            elif frame.kind == "status":
+                if frame.value == "FINISHED" and not finished:
+                    finished = True
+
+            elif frame.kind == "finish":
+                if not finished:
+                    finished = True
+
+            elif frame.kind == "usage":
+                usage_value = frame.value
+
+        if usage_value is not None:
+            chunks.append(_make_openai_chunk(
+                model, request_id,
+                usage={
+                    "prompt_tokens": 0,
+                    "completion_tokens": usage_value,
+                    "total_tokens": usage_value,
+                },
+            ))
+
+        return chunks
 
     # ------------------------------------------------------------------
     # Streaming response: DeepSeek SSE → OpenAI SSE
@@ -792,15 +858,20 @@ class DeepseekProvider:
         runtime: _AccountRuntime,
         session_id: str,
         model: str,
+        tools: list[dict[str, Any]] | None = None,
+        tool_names: list[str] | None = None,
     ) -> StreamingResponse:
         state = DsPatchState()
         text_buf = ""
         stop_id = 0
         ready_parsed = False
         pre_ready_frames: list[DsFrame] = []
+        sieve = ToolCallStreamSieve(tool_names) if tools else None
+        finish_reason = "stop"
+        tool_calls_emitted = False
 
         async def generate() -> AsyncGenerator[bytes, None]:
-            nonlocal text_buf, stop_id, ready_parsed, pre_ready_frames
+            nonlocal text_buf, stop_id, ready_parsed, pre_ready_frames, finish_reason, tool_calls_emitted
 
             try:
                 async for chunk in resp.aiter_bytes():
@@ -850,27 +921,67 @@ class DeepseekProvider:
                                         yield line.encode("utf-8")
 
                                     if pre_ready_frames:
-                                        openai_chunks = ds_frames_to_openai_chunks(pre_ready_frames, model, request_id)
+                                        if sieve is not None:
+                                            for chunk_dict in self._process_stream_frames_with_sieve(pre_ready_frames, model, request_id, sieve):
+                                                if _chunk_has_tool_calls(chunk_dict):
+                                                    tool_calls_emitted = True
+                                                line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
+                                                yield line.encode("utf-8")
+                                        else:
+                                            openai_chunks = ds_frames_to_openai_chunks(pre_ready_frames, model, request_id)
+                                            for chunk_dict in openai_chunks:
+                                                line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
+                                                yield line.encode("utf-8")
                                         pre_ready_frames = []
-                                        for chunk_dict in openai_chunks:
-                                            line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
-                                            yield line.encode("utf-8")
 
                                 continue
 
-                            openai_chunks = ds_frames_to_openai_chunks(frames, model, request_id)
-                            for chunk_dict in openai_chunks:
-                                line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
-                                yield line.encode("utf-8")
+                            if sieve is not None:
+                                for chunk_dict in self._process_stream_frames_with_sieve(frames, model, request_id, sieve):
+                                    if _chunk_has_tool_calls(chunk_dict):
+                                        tool_calls_emitted = True
+                                    line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
+                                    yield line.encode("utf-8")
+                            else:
+                                openai_chunks = ds_frames_to_openai_chunks(frames, model, request_id)
+                                for chunk_dict in openai_chunks:
+                                    line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
+                                    yield line.encode("utf-8")
 
                 if text_buf.strip():
                     sse_events = parse_sse_events(text_buf)
                     for sse_evt in sse_events:
                         frames = state.apply_event(sse_evt.event, sse_evt.data)
-                        openai_chunks = ds_frames_to_openai_chunks(frames, model, request_id)
-                        for chunk_dict in openai_chunks:
-                            line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
+                        if sieve is not None:
+                            for chunk_dict in self._process_stream_frames_with_sieve(frames, model, request_id, sieve):
+                                if _chunk_has_tool_calls(chunk_dict):
+                                    tool_calls_emitted = True
+                                line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
+                                yield line.encode("utf-8")
+                        else:
+                            openai_chunks = ds_frames_to_openai_chunks(frames, model, request_id)
+                            for chunk_dict in openai_chunks:
+                                line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
+                                yield line.encode("utf-8")
+
+                if sieve is not None:
+                    flush_result = sieve.flush()
+                    if flush_result.tool_call_chunks:
+                        tool_calls_emitted = True
+                        for delta in flush_result.tool_call_chunks:
+                            chunk = _make_openai_chunk(model, request_id, tool_call_delta=delta)
+                            line = f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                             yield line.encode("utf-8")
+                    if flush_result.content:
+                        chunk = _make_openai_chunk(model, request_id, content=flush_result.content)
+                        line = f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        yield line.encode("utf-8")
+
+                    if tool_calls_emitted:
+                        finish_reason = "tool_calls"
+
+                    final_chunk = _make_openai_chunk(model, request_id, finish_reason=finish_reason)
+                    yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n".encode("utf-8")
 
                 yield b"data: [DONE]\n\n"
 
@@ -904,6 +1015,8 @@ class DeepseekProvider:
         runtime: _AccountRuntime,
         session_id: str,
         model: str,
+        tools: list[dict[str, Any]] | None = None,
+        tool_names: list[str] | None = None,
     ) -> JSONResponse:
         state = DsPatchState()
         text_buf = ""
@@ -911,13 +1024,13 @@ class DeepseekProvider:
         try:
             async for chunk in resp.aiter_bytes():
                 text_buf += chunk.decode("utf-8", errors="replace")
-
-            if text_buf.strip():
-                sse_events = parse_sse_events(text_buf)
-                for sse_evt in sse_events:
-                    state.apply_event(sse_evt.event, sse_evt.data)
         finally:
             await resp.aclose()
+
+        if text_buf.strip():
+            sse_events = parse_sse_events(text_buf)
+            for sse_evt in sse_events:
+                state.apply_event(sse_evt.event, sse_evt.data)
 
         content = ""
         reasoning = ""
@@ -940,7 +1053,24 @@ class DeepseekProvider:
                 text_buf[:2000],
             )
 
-        message: dict[str, Any] = {"role": "assistant", "content": content or None}
+        finish_reason = "stop"
+        tool_calls_result: list[dict[str, Any]] | None = None
+
+        if tools and (content or reasoning):
+            tool_calls_result, clean_content, clean_reasoning = parse_tool_calls_from_text(
+                content, reasoning, tool_names,
+            )
+            if tool_calls_result:
+                finish_reason = "tool_calls"
+                content = clean_content
+                reasoning = clean_reasoning
+
+        message: dict[str, Any] = {"role": "assistant"}
+        if finish_reason == "tool_calls":
+            message["content"] = None
+            message["tool_calls"] = tool_calls_result
+        else:
+            message["content"] = content or None
         if reasoning:
             message["reasoning_content"] = reasoning
 
@@ -953,7 +1083,7 @@ class DeepseekProvider:
                 {
                     "index": 0,
                     "message": message,
-                    "finish_reason": "stop",
+                    "finish_reason": finish_reason,
                 }
             ],
         }

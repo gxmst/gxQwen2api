@@ -235,6 +235,79 @@ async def api_disable(request: Request, account_id: str, _=Depends(get_admin_use
     return {"status": "ok" if ok else "not_found", "account_id": account_id}
 
 
+def _cleanup_provider_runtime(request: Request, acct: AccountState) -> None:
+    if acct.provider == "deepseek":
+        deepseek = getattr(request.app.state, "deepseek", None)
+        if deepseek:
+            deepseek.remove_account_runtime(acct.account_id)
+
+
+def _delete_account_from_disk(pool: AccountPool, acct: AccountState) -> str:
+    """Delete one account credential, preserving other accounts in multi-token files."""
+    creds_file = acct.creds_file
+    action = "deleted_file"
+
+    if acct.provider == "freebuff" and acct.source_slot:
+        try:
+            raw = json.loads(creds_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to read file: {exc}") from exc
+
+        tokens = raw.get("tokens")
+        token_to_remove = acct._raw_creds.get("authToken") if isinstance(acct._raw_creds, dict) else None
+        if isinstance(tokens, list) and token_to_remove:
+            new_tokens = [
+                token for token in tokens
+                if not (isinstance(token, dict) and token.get("authToken") == token_to_remove)
+            ]
+            if len(new_tokens) == len(tokens):
+                raise HTTPException(status_code=404, detail="Credential token not found in file")
+            if new_tokens:
+                raw["tokens"] = new_tokens
+                try:
+                    creds_file.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+                except OSError as exc:
+                    raise HTTPException(status_code=500, detail=f"Failed to write file: {exc}") from exc
+                action = "removed_token"
+            else:
+                try:
+                    creds_file.unlink()
+                except OSError as exc:
+                    raise HTTPException(status_code=500, detail=f"Failed to delete file: {exc}") from exc
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported multi-account credential format")
+    else:
+        try:
+            if creds_file.exists():
+                creds_file.unlink()
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to delete file: {exc}") from exc
+
+    # Drop all states from the same file before rescanning so renamed slots do not linger.
+    same_file_ids = [
+        aid for aid, state in pool.accounts.items()
+        if state.creds_file == creds_file
+    ]
+    for aid in same_file_ids:
+        pool.accounts.pop(aid, None)
+        pool._explicitly_disabled.discard(aid)
+    if creds_file.exists():
+        pool.scan()
+    return action
+
+
+@router.post("/api/delete/{account_id}")
+async def api_delete_account(request: Request, account_id: str, _=Depends(get_admin_user)) -> dict[str, Any]:
+    pool: AccountPool = request.app.state.pool
+    acct = pool.get_account(account_id)
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    _cleanup_provider_runtime(request, acct)
+    action = _delete_account_from_disk(pool, acct)
+    return {"status": "ok", "account_id": account_id, "action": action}
+
+
 @router.post("/api/verify/{account_id}")
 async def api_verify(request: Request, account_id: str, _=Depends(get_admin_user)) -> dict[str, Any]:
     """Verify if an account's token is actually valid by checking with the API."""
@@ -425,20 +498,9 @@ async def api_deepseek_delete(
         raise HTTPException(status_code=404, detail="Account not found")
     if acct.provider != "deepseek":
         raise HTTPException(status_code=400, detail="Not a DeepSeek account")
-
-    # Clean up runtime before removing from pool
-    deepseek = getattr(request.app.state, "deepseek", None)
-    if deepseek:
-        deepseek.remove_account_runtime(account_id)
-
-    try:
-        if acct.creds_file.exists():
-            acct.creds_file.unlink()
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to delete file: {exc}")
-
-    pool.accounts.pop(account_id, None)
-    return {"status": "ok", "account_id": account_id}
+    _cleanup_provider_runtime(request, acct)
+    action = _delete_account_from_disk(pool, acct)
+    return {"status": "ok", "account_id": account_id, "action": action}
 
 
 @router.post("/api/deepseek/update/{account_id}")

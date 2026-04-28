@@ -53,6 +53,7 @@ a { color: var(--accent); }
 
 /* Account cards */
 .accounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.provider-root { width: 100%; }
 .provider-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; align-items: start; }
 .provider-group { border: 2px solid var(--border); border-radius: 10px; padding: 12px; background: rgba(255,255,255,0.01); }
 .provider-group.provider-qwen { border-color: #1f6feb88; }
@@ -803,7 +804,12 @@ function fmtUptimeDisplay(seconds) {
 
 function renderAccounts(accounts, health) {
   const el = document.getElementById('accounts');
-  if (!accounts.length) { el.innerHTML = `<div style="color:var(--muted)">${t('no_accounts')}</div>`; return; }
+  if (!accounts.length) {
+    el.className = 'accounts';
+    el.innerHTML = `<div style="color:var(--muted)">${t('no_accounts')}</div>`;
+    return;
+  }
+  el.className = 'provider-root';
 
   // Update health bar — same logic as /health endpoint
   const healthy = accounts.filter(a => {
@@ -1223,17 +1229,22 @@ function showDeepseekAddDialog() {
     </div>`;
   document.body.appendChild(overlay);
 
+  const closeDialog = () => {
+    document.removeEventListener('keydown', guardModalBackspace, true);
+    overlay.remove();
+  };
+  const guardModalBackspace = (e) => {
+    if (!document.body.contains(overlay)) return;
+    const target = e.target;
+    const editable = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+    if (e.key === 'Escape') closeDialog();
+    if (e.key === 'Backspace' && !editable) e.preventDefault();
+  };
+  document.addEventListener('keydown', guardModalBackspace, true);
+
   const dialog = overlay.querySelector('.confirm-dialog');
   dialog.addEventListener('click', e => e.stopPropagation());
-  overlay.addEventListener('keydown', e => {
-    if (e.key === 'Escape') overlay.remove();
-    if (e.key === 'Backspace') {
-      const target = e.target;
-      const editable = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
-      if (!editable) e.preventDefault();
-    }
-  });
-  overlay.querySelector('#ds-cancel').onclick = () => overlay.remove();
+  overlay.querySelector('#ds-cancel').onclick = closeDialog;
   overlay.querySelector('#ds-submit').onclick = async () => {
     const email = document.getElementById('ds-email').value.trim();
     const password = document.getElementById('ds-password').value.trim();
@@ -1252,7 +1263,7 @@ function showDeepseekAddDialog() {
       showToast('Area code is required when using mobile', 'error');
       return;
     }
-    overlay.remove();
+    closeDialog();
     try {
       const res = await fetch('/admin/api/deepseek/add', {
         method: 'POST',
@@ -1267,7 +1278,7 @@ function showDeepseekAddDialog() {
       showToast(`Add DeepSeek error: ${e.message}`, 'error');
     }
   };
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.onclick = (e) => { if (e.target === overlay) e.preventDefault(); };
   overlay.querySelector('#ds-email').focus();
 }
 

@@ -25,6 +25,7 @@ from ...account_pool import AccountPool, AccountState
 from ...event_logger import event_logger
 from ...models import ChatCompletionRequest, make_error_response
 from .auth import (
+    completion,
     create_chat_session,
     create_pow_challenge,
     delete_chat_session,
@@ -571,15 +572,17 @@ class DeepseekProvider:
 
             payload = {
                 "chat_session_id": session_id,
-                "message_id": 1,
+                "parent_message_id": None,
                 "prompt": prompt,
+                "ref_file_ids": [],
                 "search_enabled": search_enabled,
                 "thinking_enabled": thinking_enabled,
                 "model_type": ds_type,
+                "preempt": False,
             }
 
             try:
-                resp = await edit_message(
+                resp = await completion(
                     self.client,
                     runtime.account.access_token,
                     pow_header,
@@ -587,7 +590,7 @@ class DeepseekProvider:
                 )
             except Exception as exc:
                 await self._delete_session(runtime, session_id)
-                logger.warning("DeepSeek edit_message request send error for %s: %s", acct_state.account_id, exc)
+                logger.warning("DeepSeek completion request send error for %s: %s", acct_state.account_id, exc)
                 acct_state.record_error(f"Request send failed: {exc}")
                 tried_accounts.add(acct_state.account_id)
                 continue

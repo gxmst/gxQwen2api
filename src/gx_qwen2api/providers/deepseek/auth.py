@@ -295,6 +295,23 @@ async def edit_message(
     )
 
 
+async def completion(
+    client: httpx.AsyncClient,
+    token: str,
+    pow_header: str,
+    payload: dict[str, Any],
+) -> httpx.Response:
+    """Send the first message in a chat session with PoW header."""
+    return await _request(
+        client,
+        "POST",
+        "/chat/completion",
+        token=token,
+        json_data=payload,
+        extra_headers={"X-Ds-Pow-Response": pow_header},
+    )
+
+
 async def stop_stream(
     client: httpx.AsyncClient,
     token: str,

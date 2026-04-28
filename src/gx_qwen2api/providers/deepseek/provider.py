@@ -353,6 +353,42 @@ def ds_frames_to_openai_chunks(
     return chunks
 
 
+def _extract_deepseek_text_fallback(raw_text: str) -> tuple[str, str]:
+    """Best-effort extraction for DeepSeek event shapes not covered by the patch state."""
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+
+    def visit(value: Any, current_type: str | None = None) -> None:
+        if isinstance(value, dict):
+            frag_type = value.get("type")
+            if isinstance(frag_type, str):
+                current_type = frag_type
+
+            text = value.get("content")
+            if isinstance(text, str) and text:
+                if current_type == _FRAG_THINK:
+                    reasoning_parts.append(text)
+                elif current_type == _FRAG_RESPONSE or current_type is None:
+                    content_parts.append(text)
+
+            for child in value.values():
+                visit(child, current_type)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item, current_type)
+
+    for event in parse_sse_events(raw_text):
+        if not event.data or event.data.strip() == "[DONE]":
+            continue
+        try:
+            payload = json.loads(event.data)
+        except Exception:
+            continue
+        visit(payload)
+
+    return "".join(content_parts), "".join(reasoning_parts)
+
+
 # ======================================================================
 # Session / Runtime dataclasses
 # ======================================================================
@@ -891,6 +927,15 @@ class DeepseekProvider:
 
         if state.accumulated_token_usage is not None:
             usage_tokens = state.accumulated_token_usage
+
+        if not content and not reasoning and text_buf.strip():
+            content, reasoning = _extract_deepseek_text_fallback(text_buf)
+            logger.warning(
+                "DeepSeek non-stream response parsed empty; fallback content_len=%d reasoning_len=%d raw_sample=%r",
+                len(content),
+                len(reasoning),
+                text_buf[:2000],
+            )
 
         message: dict[str, Any] = {"role": "assistant", "content": content or None}
         if reasoning:

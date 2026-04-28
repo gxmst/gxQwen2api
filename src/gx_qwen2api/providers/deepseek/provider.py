@@ -695,7 +695,7 @@ class DeepseekProvider:
                 password=acct_state.password or "",
                 enabled=acct_state.enabled,
                 access_token=acct_state.access_token or "",
-                refresh_token=acct_state.refresh_token or "",
+                refresh_token=acct_state._raw_creds.get("refresh_token", "") if isinstance(acct_state._raw_creds, dict) else "",
                 mobile=acct_state._raw_creds.get("mobile", "") if isinstance(acct_state._raw_creds, dict) else "",
                 area_code=acct_state._raw_creds.get("area_code", "") if isinstance(acct_state._raw_creds, dict) else "",
             )
@@ -716,7 +716,9 @@ class DeepseekProvider:
         acct_state = self.pool.get_account(account_id)
         if acct_state:
             acct_state.access_token = runtime.account.access_token
-            acct_state.refresh_token = runtime.account.refresh_token
+            if isinstance(acct_state._raw_creds, dict):
+                acct_state._raw_creds["access_token"] = runtime.account.access_token
+                acct_state._raw_creds["refresh_token"] = runtime.account.refresh_token
 
     # ------------------------------------------------------------------
     # Prompt building

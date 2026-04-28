@@ -526,7 +526,6 @@ async def api_deepseek_login(
         runtime.account.last_error = None
         # Sync back to pool
         acct.access_token = runtime.account.access_token
-        acct.refresh_token = runtime.account.refresh_token
         # Persist to file
         try:
             raw = json.loads(acct.creds_file.read_text(encoding="utf-8"))

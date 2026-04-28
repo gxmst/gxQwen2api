@@ -163,7 +163,7 @@ class DsPatchState:
     def _apply_path(self, path: str, op: str | None, val: Any) -> list[DsFrame]:
         frames: list[DsFrame] = []
 
-        if path == "response/status":
+        if path in ("response/status", "response/quasi_status", "quasi_status"):
             if isinstance(val, str):
                 self.status = val
                 frames.append(DsFrame("status", val))
@@ -184,8 +184,10 @@ class DsPatchState:
                     frag.content += val
                     frames.append(DsFrame("content_delta", val))
 
-        elif path == "response/fragments" and op == "APPEND":
+        elif path == "response/fragments" and op in ("APPEND", "SET"):
             if isinstance(val, list):
+                if op == "SET":
+                    self.fragments.clear()
                 for item in val:
                     if isinstance(item, dict):
                         ty = item.get("type", "")
@@ -756,9 +758,10 @@ class DeepseekProvider:
         text_buf = ""
         stop_id = 0
         ready_parsed = False
+        pre_ready_frames: list[DsFrame] = []
 
         async def generate() -> AsyncGenerator[bytes, None]:
-            nonlocal text_buf, stop_id, ready_parsed
+            nonlocal text_buf, stop_id, ready_parsed, pre_ready_frames
 
             try:
                 async for chunk in resp.aiter_bytes():
@@ -789,6 +792,8 @@ class DeepseekProvider:
                                         yield f"data: {err_json}\n\n".encode("utf-8")
                                         yield b"data: [DONE]\n\n"
                                         return
+                                    elif f.kind not in ("role",):
+                                        pre_ready_frames.append(f)
 
                                 if sse_evt.event == "ready":
                                     try:
@@ -804,6 +809,13 @@ class DeepseekProvider:
                                     for chunk_dict in openai_chunks:
                                         line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
                                         yield line.encode("utf-8")
+
+                                    if pre_ready_frames:
+                                        openai_chunks = ds_frames_to_openai_chunks(pre_ready_frames, model, request_id)
+                                        pre_ready_frames = []
+                                        for chunk_dict in openai_chunks:
+                                            line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
+                                            yield line.encode("utf-8")
 
                                 continue
 

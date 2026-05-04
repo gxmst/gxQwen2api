@@ -1,5 +1,5 @@
 [project]
-name = "gx-qwen-api"
+name = "gx2api"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [

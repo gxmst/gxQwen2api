@@ -80,7 +80,7 @@ wheels = [
 ]
 
 [[package]]
-name = "gx-qwen-api"
+name = "gx2api"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -1,6 +1,7 @@
 services:
   gx-qwen-api:
     build: .
+    container_name: gx2api
 
     ports:
       - "${HOST_ADDRESS:-0.0.0.0}:${HOST_PORT:-31998}:${PORT:-31998}"

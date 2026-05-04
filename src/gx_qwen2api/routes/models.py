@@ -28,4 +28,10 @@ async def list_models(
         for model in deepseek.list_models_payload():
             if model["id"] not in existing:
                 data.append(model)
+    nvidia = getattr(request.app.state, "nvidia", None)
+    if nvidia and nvidia.has_accounts():
+        existing = {m["id"] for m in data if isinstance(m, dict) and "id" in m}
+        for model in nvidia.list_models_payload():
+            if model["id"] not in existing:
+                data.append(model)
     return {"object": "list", "data": data}

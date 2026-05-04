@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from ..account_pool import AccountPool, AccountState
 from ..auth import AuthManager
 from ..auto_refresher import AutoRefresher
+from ..call_logger import call_logger as _call_logger
 from ..config import settings
 from ..event_logger import event_logger
 from ..models import MODELS
@@ -146,6 +147,7 @@ async def api_logs(request: Request, limit: int = 100, _=Depends(get_admin_user)
 async def api_models(request: Request, _=Depends(get_admin_user)) -> dict[str, Any]:
     freebuff = request.app.state.freebuff
     deepseek = getattr(request.app.state, "deepseek", None)
+    nvidia = getattr(request.app.state, "nvidia", None)
     qwen_models = [m["id"] for m in MODELS if isinstance(m, dict) and "id" in m]
     providers = [
         {
@@ -175,6 +177,17 @@ async def api_models(request: Request, _=Depends(get_admin_user)) -> dict[str, A
                 "models": ["deepseek-flash", "deepseek-pro"],
                 "count": 2,
                 "enabled_accounts": sum(1 for a in request.app.state.pool.all_accounts() if a.provider == "deepseek" and a.enabled),
+            }
+        )
+    if nvidia and nvidia.has_accounts():
+        models = [m["id"] for m in nvidia.list_models_payload()]
+        providers.append(
+            {
+                "provider": "nvidia",
+                "label": "NVIDIA",
+                "models": models,
+                "count": len(models),
+                "enabled_accounts": sum(1 for k in nvidia.get_all_keys() if k["enabled"]),
             }
         )
     return {"providers": providers}
@@ -796,3 +809,146 @@ async def api_upload(request: Request, file: UploadFile, _=Depends(get_admin_use
         "action": action,
         "persisted": write_succeeded,
     }
+
+
+# ── Call logs ────────────────────────────────────────────────
+
+@router.get("/api/call-logs")
+async def api_call_logs(
+    request: Request,
+    limit: int = 100,
+    provider: str = "",
+    status: str = "",
+    model: str = "",
+    _=Depends(get_admin_user),
+) -> list[dict[str, Any]]:
+    return _call_logger.get_logs(limit=limit, provider=provider, status=status, model=model)
+
+
+@router.post("/api/call-logs/clear")
+async def api_clear_call_logs(request: Request, _=Depends(get_admin_user)) -> dict[str, str]:
+    _call_logger.clear()
+    return {"status": "ok"}
+
+
+# ── NVIDIA key management ─────────────────────────────────────
+
+@router.get("/api/nvidia/keys")
+async def api_nvidia_keys(request: Request, _=Depends(get_admin_user)) -> list[dict[str, Any]]:
+    nvidia = getattr(request.app.state, "nvidia", None)
+    if not nvidia:
+        return []
+    return nvidia.get_all_keys()
+
+
+@router.post("/api/nvidia/keys")
+async def api_nvidia_add_key(
+    request: Request,
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    nvidia = getattr(request.app.state, "nvidia", None)
+    if not nvidia:
+        raise HTTPException(status_code=500, detail="NVIDIA provider not initialized")
+
+    body = await request.json()
+    key_id = str(body.get("key_id", "")).strip()
+    api_key = str(body.get("api_key", "")).strip()
+    name = str(body.get("name", "")).strip()
+
+    if not key_id:
+        raise HTTPException(status_code=400, detail="key_id is required")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="api_key is required")
+
+    result = nvidia.add_key(key_id, api_key, name)
+    if result.get("status") == "failed":
+        raise HTTPException(status_code=400, detail=result.get("detail", "Unknown error"))
+    return result
+
+
+@router.delete("/api/nvidia/keys/{key_id}")
+async def api_nvidia_delete_key(
+    request: Request,
+    key_id: str,
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    nvidia = getattr(request.app.state, "nvidia", None)
+    if not nvidia:
+        raise HTTPException(status_code=500, detail="NVIDIA provider not initialized")
+    ok = nvidia.delete_key(key_id)
+    return {"status": "ok" if ok else "not_found", "key_id": key_id}
+
+
+@router.post("/api/nvidia/keys/{key_id}/verify")
+async def api_nvidia_verify_key(
+    request: Request,
+    key_id: str,
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    nvidia = getattr(request.app.state, "nvidia", None)
+    if not nvidia:
+        raise HTTPException(status_code=500, detail="NVIDIA provider not initialized")
+    return await nvidia.verify_key(key_id)
+
+
+@router.post("/api/nvidia/keys/{key_id}/enable")
+async def api_nvidia_enable_key(
+    request: Request,
+    key_id: str,
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    nvidia = getattr(request.app.state, "nvidia", None)
+    if not nvidia:
+        raise HTTPException(status_code=500, detail="NVIDIA provider not initialized")
+    ok = nvidia.enable_key(key_id)
+    return {"status": "ok" if ok else "not_found", "key_id": key_id}
+
+
+@router.post("/api/nvidia/keys/{key_id}/disable")
+async def api_nvidia_disable_key(
+    request: Request,
+    key_id: str,
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    nvidia = getattr(request.app.state, "nvidia", None)
+    if not nvidia:
+        raise HTTPException(status_code=500, detail="NVIDIA provider not initialized")
+    ok = nvidia.disable_key(key_id)
+    return {"status": "ok" if ok else "not_found", "key_id": key_id}
+
+
+@router.get("/api/nvidia/models")
+async def api_nvidia_fetch_models(
+    request: Request,
+    key_id: str = "",
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    nvidia = getattr(request.app.state, "nvidia", None)
+    if not nvidia:
+        return {"status": "failed", "detail": "NVIDIA provider not initialized", "models": []}
+    if key_id:
+        return await nvidia.fetch_upstream_models(key_id)
+    # If no key_id, return from first key or builtin
+    keys = nvidia.get_all_keys()
+    if keys:
+        return await nvidia.fetch_upstream_models(keys[0]["key_id"])
+    from ..providers.nvidia.models import get_builtin_models
+    return {"status": "ok", "models": get_builtin_models(), "source": "builtin"}
+
+
+@router.post("/api/nvidia/models")
+async def api_nvidia_set_models(
+    request: Request,
+    _=Depends(get_admin_user),
+) -> dict[str, Any]:
+    nvidia = getattr(request.app.state, "nvidia", None)
+    if not nvidia:
+        raise HTTPException(status_code=500, detail="NVIDIA provider not initialized")
+    body = await request.json()
+    key_id = str(body.get("key_id", "")).strip()
+    models = body.get("models")
+    if not key_id:
+        raise HTTPException(status_code=400, detail="key_id is required")
+    if not isinstance(models, list):
+        raise HTTPException(status_code=400, detail="models must be an array")
+    return nvidia.set_key_models(key_id, models)

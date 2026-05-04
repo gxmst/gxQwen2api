@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>gxQwen2api — Admin</title>
+<title>gx2api — Admin</title>
 <style>
 :root {
   --bg: #0d1117; --surface: #161b22; --border: #30363d;
@@ -59,6 +59,7 @@ a { color: var(--accent); }
 .provider-group.provider-qwen { border-color: #1f6feb88; }
 .provider-group.provider-freebuff { border-color: #3fb95088; }
 .provider-group.provider-deepseek { border-color: #bc8cff88; }
+.provider-group.provider-nvidia { border-color: #76b90088; }
 .provider-group .accounts { grid-template-columns: 1fr; }
 .provider-group-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
 .provider-group-title { font-size: 0.95rem; font-weight: 700; }
@@ -188,11 +189,34 @@ a { color: var(--accent); }
 
 /* Cooldown countdown */
 .cooldown-timer { color: var(--orange); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Toast notifications */
+.toast-container { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 10px 20px; border-radius: 8px; font-size: 0.85rem; font-weight: 500; box-shadow: 0 4px 16px rgba(0,0,0,0.4); pointer-events: auto; animation: toastIn 0.25s ease-out; max-width: 480px; word-break: break-word; }
+.toast.success { background: #1a3a1a; color: var(--green); border: 1px solid var(--green); }
+.toast.error { background: #3a1a1a; color: var(--red); border: 1px solid var(--red); }
+.toast.info { background: #1a2a3a; color: var(--accent); border: 1px solid var(--accent); }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Call logs table */
+.call-logs-table table { width:100%; border-collapse:collapse; font-size:0.78rem; }
+.call-logs-table th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-weight:600; white-space:nowrap; position:sticky; top:0; background:var(--surface); }
+.call-logs-table td { padding:6px 8px; border-bottom:1px solid var(--log-border); white-space:nowrap; }
+.call-logs-table tr.error-row { background: rgba(248,81,73,0.08); }
+.call-logs-table tr.auth-error-row { background: rgba(248,81,73,0.12); }
+.call-logs-table td.token { max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
+.call-logs-table .status-badge { display:inline-block; padding:1px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; }
+.call-logs-table .status-badge.success { background:#23863622; color:var(--green); }
+.call-logs-table .status-badge.error { background:#f8514922; color:var(--red); }
+.call-logs-table .status-badge.rate_limited { background:#d2992222; color:var(--yellow); }
+.call-logs-table .status-badge.auth_error { background:#f8514922; color:var(--red); }
+
 </style>
 </head>
 <body>
+<div class="toast-container" id="toastContainer"></div>
 <div class="container">
-  <h1 data-i18n="title">gxQwen2api — 管理面板</h1>
+  <h1 data-i18n="title">gx2api — 管理面板</h1>
 
   <div class="topbar">
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -202,6 +226,7 @@ a { color: var(--accent); }
       <button class="btn" onclick="doAction('/admin/api/reload-all', 'reload_all')" data-i18n="btn_reload_all">🔄 重载全部</button>
       <button class="btn btn-orange" onclick="runAutoRefreshNow()" data-i18n="btn_auto_refresh_now">⚡ 立即预刷新</button>
       <button class="btn btn-purple" onclick="showDeepseekAddDialog()" data-i18n="btn_add_deepseek">➕ 添加 DeepSeek</button>
+      <button class="btn btn-orange" onclick="showNvidiaAddDialog()" data-i18n="btn_add_nvidia" style="border-color:#76b90088;color:#76b900">➕ 添加 NVIDIA</button>
     </div>
     <div class="topbar-right">
       <div id="loginStatus" class="login-status" style="display:none">
@@ -270,330 +295,41 @@ a { color: var(--accent); }
   <div class="logs-box" id="logsBox">
     <div style="color:var(--muted)" data-i18n="logs_loading">加载日志中...</div>
   </div>
+
+  
+  <h2 data-i18n="nvidia_keys_title">NVIDIA API Keys</h2>
+  <div id="nvidiaSection" style="display:none">
+    <div id="nvidiaKeysList"></div>
+  </div>
+
+  <h2><span data-i18n="section_call_logs">调用日志</span> <span id="callLogCount" style="font-size:0.75rem;color:var(--muted)"></span></h2>
+  <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+    <button class="btn btn-sm" onclick="loadCallLogs()" data-i18n="btn_refresh_call_logs">📋 刷新调用日志</button>
+    <select id="callLogProviderFilter" onchange="loadCallLogs()" style="padding:4px 8px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:0.75rem">
+      <option value="">全部 Provider</option>
+      <option value="qwen">Qwen</option>
+      <option value="deepseek">DeepSeek</option>
+      <option value="freebuff">Freebuff</option>
+      <option value="nvidia">NVIDIA</option>
+    </select>
+    <select id="callLogStatusFilter" onchange="loadCallLogs()" style="padding:4px 8px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:0.75rem">
+      <option value="">全部状态</option>
+      <option value="success">成功</option>
+      <option value="error">错误</option>
+      <option value="auth_error">认证错误</option>
+      <option value="rate_limited">限流</option>
+    </select>
+    <button class="btn btn-red btn-sm btn-danger-outline" onclick="confirmClearCallLogs()" data-i18n="btn_clear_call_logs" style="margin-left:auto">🗑️ 清空调用日志</button>
+  </div>
+  <div class="call-logs-table" id="callLogsBox" style="overflow-x:auto">
+    <div style="color:var(--muted)" data-i18n="loading">加载中...</div>
+  </div>
+
 </div>
 
 <script>
-const API = '';
 
-// ── i18n ────────────────────────────────────────────────────────
-const i18n = {
-  zh: {
-    title: 'gxQwen2api — 管理面板',
-    btn_refresh_now: '🔄 立即刷新',
-    btn_refresh_logs: '📋 刷新日志',
-    btn_scan: '📁 扫描凭证目录',
-    btn_reload_all: '🔄 重载全部',
-    btn_upload: '📤 上传凭证',
-    btn_clear_logs: '🗑️ 清空日志',
-    logged_in: '已登录',
-    btn_logout: '退出',
-    auto_refresh_label: '自动刷新:',
-    auto_refresh_off: '关闭',
-    auto_refresh_status_label: '自动预刷新:',
-    btn_auto_refresh_now: '⚡ 立即预刷新',
-    ar_title: '自动续期',
-    ar_no_refresh_token: '无 refresh_token，无法自动续期',
-    ar_result_success: '成功',
-    ar_result_failed: '失败',
-    ar_result_skipped: '已跳过',
-    ar_last_time: '最近执行',
-    ar_last_result: '结果',
-    ar_status_on: '✅ 已启用',
-    ar_status_off: '❌ 已关闭',
-    ar_interval: '周期: {s}s',
-    ar_threshold: '阈值: {m}min',
-    ar_last_cycle: '上次周期: {ago}',
-    ar_manual_run: '已触发',
-    health_accounts: '账号总数',
-    health_healthy: '健康账号',
-    health_requests: '总请求数',
-    health_uptime: '运行时间',
-    section_accounts: '账号列表',
-    section_models: '当前模型',
-    section_logs: '事件日志',
-    loading: '加载中...',
-    upload_title: '📤 上传凭证',
-    upload_drop: '点击选择或拖放 JSON 文件到此处',
-    upload_hint: '文件名将作为账号 ID',
-    logs_loading: '加载日志中...',
-    no_accounts: '未找到账号。请确保凭证目录中有 JSON 文件。',
-    no_models: '暂无模型信息。',
-    no_logs: '暂无事件日志。',
-    provider_group_accounts: '个账号',
-    status_valid: '有效',
-    status_expiring_soon: '即将过期',
-    status_expired: '已过期',
-    status_auth_error: '认证错误',
-    status_refresh_failed: '刷新失败',
-    status_cooldown: '冷却中',
-    status_rate_limited: '触发限流',
-    status_quota_exhausted: '额度耗尽',
-    status_disabled: '已禁用',
-    status_no_token: '无 Token',
-    status_unknown: '未知',
-    enabled: '已启用',
-    disabled: '已禁用',
-    meta_provider: '渠道',
-    meta_health: '健康状态',
-    meta_reason: '状态说明',
-    meta_expires: '剩余时间',
-    meta_requests: '请求数',
-    meta_errors: '错误数',
-    meta_last_refresh: '上次刷新',
-    meta_timestamps: '关键时间',
-    meta_reason: '状态说明',
-    ts_last_check: '最近校验',
-    ts_last_verify_success: '校验成功',
-    ts_last_proxy_success: '最近成功',
-    ts_last_failure: '校验失败',
-    meta_persistence: '持久化状态',
-    warning_not_persisted: '⚠️ 仅内存（写入磁盘失败，重启将丢失）',
-    btn_enable: '✅ 启用',
-    btn_disable: '⛔ 禁用',
-    btn_force_refresh: '🔄 强制刷新',
-    btn_reload_file: '📄 重载文件',
-    btn_verify: '🔍 校验',
-    verifying: '校验中...',
-    verify_success: '✅ Token 有效，账号可用',
-    verify_fail_token: '❌ Token 无效或认证失败',
-    verify_fail_network: '❌ 网络错误，无法连接 API',
-    verify_fail_endpoint: '❌ API 端点异常',
-    verify_fail_permission: '❌ 权限不足（HTTP 401/403）',
-    verify_error: '⚠️ 校验出错',
-    scan: '扫描完成',
-    reload_all: '重载全部完成',
-    enable: '已启用',
-    disable: '已禁用',
-    refresh: '刷新完成',
-    reload: '重载完成',
-    verify: '校验完成',
-    upload_success: '✅ 上传成功: {id} ({action})',
-    upload_new: '新账号',
-    upload_renamed: '自动重命名',
-    upload_overwrite: '覆盖',
-    upload_memory_only: '内存中（未持久化）',
-    upload_error: '上传失败: {error}',
-    upload_invalid_filename: '文件名无效，必须是 .json 格式',
-    upload_too_large: '文件过大（最大 64KB）',
-    upload_not_json: '不是有效的 JSON 文件',
-    upload_missing_keys: '缺少必要字段',
-    confirm_clear_logs: '确定要清空所有日志吗？此操作不可撤销。',
-    confirm_disable: '确定要禁用账号 {id} 吗？',
-    confirm: '确认',
-    cancel: '取消',
-    minutes: '分钟',
-    hours: '小时',
-    days: '天',
-    expired_text: '已过期',
-    no_expiry: '无过期时间',
-    never: '从未',
-    ago: '前',
-    uploading: '上传中...',
-    // Reason keys (status_reason i18n)
-    reason_valid: 'Token 有效',
-    reason_expiring_soon: 'Token 即将过期（约 {minutes} 分钟后）',
-    reason_expired: 'Token 已过期',
-    reason_auth_error: '认证错误：{error}',
-    reason_refresh_failed: 'Token 刷新失败：{error}',
-    reason_cooldown: '正在冷却（剩余 {seconds} 秒）',
-    reason_rate_limited: '限流冷却（剩余 {seconds} 秒）：{error}',
-    reason_quota_exhausted: '额度已用尽（预计 {seconds} 秒后重试）：{error}',
-    reason_disabled: '账号已禁用',
-    reason_no_token: '未加载 Access Token',
-    reason_no_credentials: '未配置邮箱/密码',
-    provider_qwen: 'Qwen OAuth',
-    provider_freebuff: 'Freebuff',
-    provider_deepseek: 'DeepSeek',
-    btn_add_deepseek: '➕ 添加 DeepSeek',
-    ds_add_title: '添加 DeepSeek 账号',
-    ds_email_label: '邮箱（可选）',
-    ds_mobile_label: '手机号（可选）',
-    ds_area_code_label: '区号 如+86',
-    ds_password_label: '密码',
-    ds_account_id_label: '账号ID（留空自动生成）',
-    ds_add_submit: '添加',
-    ds_delete: '删除账号',
-    ds_login: '立即登录',
-    ds_update: '更新密码',
-    confirm_delete_ds: '确定要删除 DeepSeek 账号 {id} 吗？此操作不可撤销。',
-  },
-  en: {
-    title: 'gxQwen2api — Dashboard',
-    btn_refresh_now: '🔄 Refresh Now',
-    btn_refresh_logs: '📋 Refresh Logs',
-    btn_scan: '📁 Scan Creds Dir',
-    btn_reload_all: '🔄 Reload All',
-    btn_upload: '📤 Upload Credential',
-    btn_clear_logs: '🗑️ Clear Logs',
-    logged_in: 'Logged in',
-    btn_logout: 'Logout',
-    auto_refresh_label: 'Auto-refresh:',
-    auto_refresh_off: 'Off',
-    auto_refresh_status_label: 'Auto-refresh:',
-    btn_auto_refresh_now: '⚡ Run Auto-Refresh',
-    ar_title: 'Auto-renew',
-    ar_no_refresh_token: 'No refresh_token, cannot auto-renew',
-    ar_result_success: 'Success',
-    ar_result_failed: 'Failed',
-    ar_result_skipped: 'Skipped',
-    ar_last_time: 'Last run',
-    ar_last_result: 'Result',
-    ar_status_on: '✅ Enabled',
-    ar_status_off: '❌ Disabled',
-    ar_interval: 'Interval: {s}s',
-    ar_threshold: 'Threshold: {m}min',
-    ar_last_cycle: 'Last cycle: {ago}',
-    ar_manual_run: 'Triggered',
-    health_accounts: 'Total Accounts',
-    health_healthy: 'Healthy',
-    health_requests: 'Total Requests',
-    health_uptime: 'Uptime',
-    section_accounts: 'Accounts',
-    section_models: 'Models',
-    section_logs: 'Event Logs',
-    loading: 'Loading...',
-    upload_title: '📤 Upload Credential',
-    upload_drop: 'Click to select or drag a JSON file here',
-    upload_hint: 'Filename becomes account ID',
-    logs_loading: 'Loading logs...',
-    no_accounts: 'No accounts found. Make sure JSON files exist in the creds directory.',
-    no_models: 'No model information available.',
-    no_logs: 'No events yet.',
-    provider_group_accounts: 'accounts',
-    status_valid: 'Valid',
-    status_expiring_soon: 'Expiring Soon',
-    status_expired: 'Expired',
-    status_auth_error: 'Auth Error',
-    status_refresh_failed: 'Refresh Failed',
-    status_cooldown: 'Cooldown',
-    status_rate_limited: 'Rate Limited',
-    status_quota_exhausted: 'Quota Exhausted',
-    status_disabled: 'Disabled',
-    status_no_token: 'No Token',
-    status_unknown: 'Unknown',
-    enabled: 'Enabled',
-    disabled: 'Disabled',
-    meta_provider: 'Provider',
-    meta_health: 'Health',
-    meta_reason: 'Reason',
-    meta_expires: 'Expires In',
-    meta_requests: 'Requests',
-    meta_errors: 'Errors',
-    meta_last_refresh: 'Last Refresh',
-    meta_timestamps: 'Key Times',
-    meta_reason: 'Reason',
-    ts_last_check: 'Last Check',
-    ts_last_verify_success: 'Verify Success',
-    ts_last_proxy_success: 'Last Success',
-    ts_last_failure: 'Last Failure',
-    meta_persistence: 'Persistence',
-    warning_not_persisted: '⚠️ Memory Only (Write failed, will lose on restart)',
-    btn_enable: '✅ Enable',
-    btn_disable: '⛔ Disable',
-    btn_force_refresh: '🔄 Force Refresh',
-    btn_reload_file: '📄 Reload File',
-    btn_verify: '🔍 Verify',
-    verifying: 'Verifying...',
-    verify_success: '✅ Token is valid, account is usable',
-    verify_fail_token: '❌ Token is invalid or authentication failed',
-    verify_fail_network: '❌ Network error, cannot reach API',
-    verify_fail_endpoint: '❌ API endpoint error',
-    verify_fail_permission: '❌ Permission denied (HTTP 401/403)',
-    verify_error: '⚠️ Verification error',
-    scan: 'Scan complete',
-    reload_all: 'Reload all complete',
-    enable: 'Enabled',
-    disable: 'Disabled',
-    refresh: 'Refresh complete',
-    reload: 'Reload complete',
-    verify: 'Verify complete',
-    upload_success: '✅ Uploaded: {id} ({action})',
-    upload_new: 'new',
-    upload_renamed: 'auto-renamed',
-    upload_overwrite: 'overwritten',
-    upload_memory_only: 'in-memory only',
-    upload_error: 'Upload error: {error}',
-    upload_invalid_filename: 'Invalid filename, must be .json format',
-    upload_too_large: 'File too large (max 64KB)',
-    upload_not_json: 'Not a valid JSON file',
-    upload_missing_keys: 'Missing required fields',
-    confirm_clear_logs: 'Are you sure you want to clear all logs? This cannot be undone.',
-    confirm_disable: 'Are you sure you want to disable account {id}?',
-    confirm: 'Confirm',
-    cancel: 'Cancel',
-    minutes: 'min',
-    hours: 'h',
-    days: 'd',
-    expired_text: 'Expired',
-    no_expiry: 'No expiry',
-    never: 'Never',
-    ago: 'ago',
-    uploading: 'Uploading...',
-    // Reason keys (status_reason i18n)
-    reason_valid: 'Token is valid',
-    reason_expiring_soon: 'Token expiring soon (~{minutes} min)',
-    reason_expired: 'Token has expired',
-    reason_auth_error: 'Auth error: {error}',
-    reason_refresh_failed: 'Token refresh failed: {error}',
-    reason_cooldown: 'In cooldown ({seconds}s remaining)',
-    reason_rate_limited: 'Rate limited ({seconds}s remaining): {error}',
-    reason_quota_exhausted: 'Quota exhausted ({seconds}s remaining): {error}',
-    reason_disabled: 'Account disabled',
-    reason_no_token: 'No access token loaded',
-    reason_no_credentials: 'No email/password configured',
-    provider_qwen: 'Qwen OAuth',
-    provider_freebuff: 'Freebuff',
-    provider_deepseek: 'DeepSeek',
-    btn_add_deepseek: '➕ Add DeepSeek',
-    ds_add_title: 'Add DeepSeek Account',
-    ds_email_label: 'Email (optional)',
-    ds_mobile_label: 'Mobile (optional)',
-    ds_area_code_label: 'Area code e.g. +86',
-    ds_password_label: 'Password',
-    ds_account_id_label: 'Account ID (auto-generated if empty)',
-    ds_add_submit: 'Add',
-    ds_delete: 'Delete Account',
-    ds_login: 'Login Now',
-    ds_update: 'Update Password',
-    confirm_delete_ds: 'Are you sure you want to delete DeepSeek account {id}? This cannot be undone.',
-  }
-};
-
-let currentLang = localStorage.getItem('gx_admin_lang') || 'zh';
-let currentTheme = localStorage.getItem('gx_admin_theme') || 'dark';
-
-function t(key) {
-  return i18n[currentLang]?.[key] || i18n.zh[key] || key;
-}
-
-function setLanguage(lang) {
-  currentLang = lang;
-  localStorage.setItem('gx_admin_lang', lang);
-  applyTranslations();
-  loadAccounts();
-}
-
-function applyTranslations() {
-  document.querySelectorAll('[data-i18n]').forEach(el => {
-    const key = el.getAttribute('data-i18n');
-    const text = t(key);
-    if (text) el.textContent = text;
-  });
-  document.querySelectorAll('.lang-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.lang === currentLang);
-  });
-  document.documentElement.lang = currentLang;
-}
-
-function applyTheme() {
-  document.documentElement.dataset.theme = currentTheme;
-  const btn = document.getElementById('themeToggle');
-  if (btn) {
-    btn.textContent = currentTheme === 'light' ? '☀️' : '🌙';
-    btn.title = currentTheme === 'light' ? 'Switch to dark mode' : 'Switch to light mode';
-  }
-}
-
+// ── Toast notifications ───────────────────────────────────────────
 function toggleTheme() {
   currentTheme = currentTheme === 'light' ? 'dark' : 'light';
   localStorage.setItem('gx_admin_theme', currentTheme);
@@ -1052,12 +788,13 @@ async function doAccount(action, accountId) {
 
 async function doAction(url, labelKey) {
   try {
-    const res = await fetch(url, { method: 'POST' });
-    const data = await res.json();
-    showToast(`${t(labelKey)} — ${data.status || 'ok'}`, 'success');
+    var res = await fetch(url, { method: 'POST' });
+    var data = await res.json();
+    showToast(t(labelKey) + ' - ' + (data.status || 'ok'), 'success');
     await loadAccounts();
+    loadNvidiaKeys();
   } catch (e) {
-    showToast(`${labelKey} — error: ${e.message}`, 'error');
+    showToast(labelKey + ' - error: ' + e.message, 'error');
   }
 }
 
@@ -1316,14 +1053,18 @@ async function doDeepseekLogin(accountId) {
 }
 
 // ── Toast ───────────────────────────────────────────────────────
-function showToast(msg, type = 'success') {
-  let t_el = document.getElementById('toast');
-  if (!t_el) { t_el = document.createElement('div'); t_el.id = 'toast'; document.body.appendChild(t_el); }
-  t_el.textContent = msg;
-  t_el.className = type; // success, error, warning
-  t_el.style.opacity = '1';
-  clearTimeout(t_el._timer);
-  t_el._timer = setTimeout(() => { t_el.style.opacity = '0'; }, 4000);
+function showToast(msg, type) {
+  type = type || 'info';
+  var c = document.getElementById('toastContainer');
+  if (!c) return;
+  var el = document.createElement('div');
+  var cls = 'toast ' + (type === 'success' ? 'success' : type === 'error' ? 'error' : 'info');
+  el.className = cls;
+  el.textContent = msg;
+  c.innerHTML = '';
+  c.appendChild(el);
+  clearTimeout(c._timer);
+  c._timer = setTimeout(function(){ c.innerHTML = ''; }, 5000);
 }
 
 // ── Utils ───────────────────────────────────────────────────────
@@ -1342,9 +1083,183 @@ function toggleAuto() {
 applyTranslations();
 applyTheme();
 showLoginStatus();
-loadAccounts();
+loadAccounts().then(function() { loadCallLogs(); loadNvidiaKeys(); });
 toggleAuto();
 initDropZone();
+
+
+async function doApiCallWithToast(url, method, body) {
+  method = method || 'POST';
+  showToast(t('processing') + '...', 'info');
+  try {
+    var opts = { method: method, headers: {} };
+    if (body) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    var r = await fetch(API + url, opts);
+    if (r.status === 204) { showToast(t('ok'), 'success'); loadAccounts(); loadNvidiaKeys(); return {status:'ok'}; }
+    var data = await r.json().catch(function(){ return {}; });
+    if (r.ok) {
+      showToast(data.detail || data.status || t('ok'), 'success');
+    } else {
+      showToast(data.detail || 'HTTP ' + r.status, 'error');
+    }
+    loadAccounts();
+    loadNvidiaKeys();
+    return data;
+  } catch(e) {
+    showToast(e.message || String(e), 'error');
+    return null;
+  }
+}
+// ── Call logs ─────────────────────────────────────────────────────
+async function loadCallLogs() {
+  const p = document.getElementById('callLogProviderFilter').value;
+  const s = document.getElementById('callLogStatusFilter').value;
+  const params = new URLSearchParams({limit: '100'});
+  if (p) params.set('provider', p);
+  if (s) params.set('status', s);
+  try {
+    const r = await fetch(API + '/admin/api/call-logs?' + params.toString());
+    const logs = await r.json();
+    renderCallLogs(logs);
+  } catch(e) {
+    document.getElementById('callLogsBox').innerHTML = '<div style="color:var(--red)">Failed to load</div>';
+  }
+}
+
+function renderCallLogs(logs) {
+  const box = document.getElementById('callLogsBox');
+  document.getElementById('callLogCount').textContent = '(' + logs.length + ')';
+  if (!logs.length) { box.innerHTML = '<div style="color:var(--muted)">No call logs</div>'; return; }
+  let html = '<table><thead><tr><th>' + t('call_log_table_ts') + '</th><th>' + t('call_log_table_provider') + '</th><th>' + t('call_log_table_key') + '</th><th>' + t('call_log_table_model') + '</th><th>' + t('call_log_table_status') + '</th><th>' + t('call_log_table_input') + '</th><th>' + t('call_log_table_output') + '</th><th>' + t('call_log_table_latency') + '</th></tr></thead><tbody>';
+  for (const l of logs) {
+    const ts = (l.ts || '').replace('T',' ').substring(0,19);
+    const rowClass = (l.status === 'error' || l.status === 'auth_error') ? ' error-row' : (l.status === 'rate_limited' ? ' auth-error-row' : '');
+    const sbadge = '<span class="status-badge ' + l.status + '">' + l.status + '</span>';
+    html += '<tr class="' + rowClass + '"><td>' + ts + '</td><td>' + (l.provider || '') + '</td><td>' + (l.account_id || '') + '</td><td>' + (l.model || '') + '</td><td>' + sbadge + '</td><td>' + (l.input_tokens != null ? l.input_tokens : '-') + '</td><td>' + (l.output_tokens != null ? l.output_tokens : '-') + '</td><td>' + (l.latency_ms != null ? l.latency_ms + 'ms' : '-') + '</td></tr>';
+  }
+  html += '</tbody></table>';
+  box.innerHTML = html;
+}
+
+function confirmClearCallLogs() {
+  if (!confirm(t('confirm_clear_logs') || 'Clear all call logs?')) return;
+  doApiCallWithToast('/admin/api/call-logs/clear', 'POST', null);
+  setTimeout(loadCallLogs, 500);
+}
+
+// ── NVIDIA Key Management ─────────────────────────────────────────
+async function loadNvidiaKeys() {
+  try {
+    const r = await fetch(API + '/admin/api/nvidia/keys');
+    const keys = await r.json();
+    renderNvidiaKeys(keys);
+  } catch(e) {}
+}
+
+function renderNvidiaKeys(keys) {
+  const section = document.getElementById('nvidiaSection');
+  if (!section) return;
+  if (!keys.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  const list = document.getElementById('nvidiaKeysList');
+  let html = '';
+  for (const k of keys) {
+    const sc = k.status === 'valid' ? 'var(--green)' : k.status === 'auth_error' ? 'var(--red)' : k.status === 'rate_limited' ? 'var(--yellow)' : 'var(--muted)';
+    const cb = k.cooldown_remaining > 0 ? ' (' + Math.round(k.cooldown_remaining) + 's)' : '';
+    html += '<div class="card" style="margin-bottom:8px">' +
+      '<h3>' + (k.name || k.key_id) + ' <span style="color:' + sc + ';font-size:0.75rem">' + k.status + cb + '</span></h3>' +
+      '<div class="meta-row"><span class="meta-label">Key:</span><span class="meta-value">' + (k.masked_key || '****') + '</span></div>' +
+      '<div class="meta-row"><span class="meta-label">Models:</span><span class="meta-value">' + (k.model_count || 0) + '</span></div>' +
+      '<div class="card-actions">' +
+        '<button class="btn btn-sm" onclick="verifyNvidiaKey(\x27' + escAttr(k.key_id) + '\x27)">✅ ' + t('btn_verify') + '</button>' +
+        '<button class="btn btn-sm btn-green" onclick="fetchNvidiaModels(\x27' + escAttr(k.key_id) + '\x27)">🔄 ' + t('nvidia_refresh_models') + '</button>' +
+        '<button class="btn btn-sm btn-red" onclick="deleteNvidiaKey(\x27' + escAttr(k.key_id) + '\x27)">🗑️ ' + t('btn_delete') + '</button>' +
+      '</div></div>';
+  }
+  list.innerHTML = html;
+}
+
+async function verifyNvidiaKey(keyId) {
+  showToast(t('processing') + '\u2026', 'info');
+  try {
+    var r = await fetch(API + '/admin/api/nvidia/keys/' + keyId + '/verify', { method: 'POST' });
+    var d = await r.json();
+    if (d.valid) { showToast(t('verify_ok'), 'success'); } else { showToast(d.detail || t('verify_fail'), 'error'); }
+    loadNvidiaKeys();
+  } catch(e) { showToast(e.message, 'error'); }
+}
+
+async function fetchNvidiaModels(keyId) {
+  showToast(t('processing') + '…', 'info');
+  try {
+    const r = await fetch(API + '/admin/api/nvidia/models?key_id=' + keyId);
+    const d = await r.json();
+    if (d.models && d.models.length > 0) {
+      showNvidiaModelSelect(keyId, d.models);
+    } else {
+      showToast('No models found', 'error');
+    }
+  } catch(e) { showToast(e.message, 'error'); }
+}
+
+function showNvidiaModelSelect(keyId, models) {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  let rows = '';
+  for (const m of models) {
+    rows += '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.8rem">' +
+      '<input type="checkbox" class="nvm-check" value="' + m.upstream + '" ' + (m.enabled !== false ? 'checked' : '') + '>' +
+      (m.local || m.upstream) + '</label>';
+  }
+  overlay.innerHTML = '<div class="confirm-dialog" style="max-width:600px"><h3 style="color:var(--accent)">NVIDIA Models - ' + keyId + '</h3>' +
+    '<div style="max-height:300px;overflow-y:auto;margin-bottom:12px">' + rows + '</div>' +
+    '<div class="btn-group">' +
+      '<button class="btn" onclick="this.closest(\x27.confirm-overlay\x27).remove()">' + t('btn_cancel') + '</button>' +
+      '<button class="btn btn-green" id="nvmSaveBtn">' + t('btn_save') + '</button>' +
+    '</div></div>';
+  overlay.querySelector('#nvmSaveBtn').onclick = async function() {
+    const checks = overlay.querySelectorAll('.nvm-check');
+    const selected = [];
+    for (const cb of checks) {
+      selected.push({upstream: cb.value, local: models.find(m => m.upstream === cb.value)?.local || cb.value, enabled: cb.checked});
+    }
+    const r = await doApiCallWithToast('/admin/api/nvidia/models', 'POST', {key_id: keyId, models: selected});
+    if (r) overlay.remove();
+  };
+  document.body.appendChild(overlay);
+}
+
+function showNvidiaAddDialog() {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.innerHTML = '<div class="confirm-dialog"><h3 style="color:#76b900">' + t('nvidia_add_title') + '</h3>' +
+    '<div style="margin-bottom:8px"><label style="font-size:0.8rem;color:var(--muted)">' + t('nvidia_key_id') + '</label><input id="nvidiaKeyId" style="width:100%;padding:6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px" placeholder="' + t('nvidia_key_id_placeholder') + '"></div>' +
+    '<div style="margin-bottom:8px"><label style="font-size:0.8rem;color:var(--muted)">' + t('nvidia_api_key') + '</label><input id="nvidiaApiKey" type="password" style="width:100%;padding:6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px" placeholder="' + t('nvidia_api_key_placeholder') + '"></div>' +
+    '<div style="margin-bottom:8px"><label style="font-size:0.8rem;color:var(--muted)">' + t('nvidia_name') + '</label><input id="nvidiaName" style="width:100%;padding:6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px" placeholder="' + t('nvidia_name') + '"></div>' +
+    '<div class="btn-group">' +
+      '<button class="btn" onclick="this.closest(\x27.confirm-overlay\x27).remove()">' + t('btn_cancel') + '</button>' +
+      '<button class="btn btn-green" id="nvidiaAddBtn">' + t('btn_save') + '</button>' +
+    '</div></div>';
+  overlay.querySelector('#nvidiaAddBtn').onclick = async function() {
+    const keyId = document.getElementById('nvidiaKeyId').value.trim();
+    const apiKey = document.getElementById('nvidiaApiKey').value.trim();
+    const name = document.getElementById('nvidiaName').value.trim();
+    if (!keyId || !apiKey) { showToast('Key ID and API Key are required', 'error'); return; }
+    const r = await doApiCallWithToast('/admin/api/nvidia/keys', 'POST', {key_id: keyId, api_key: apiKey, name: name});
+    if (r && r.status === 'ok') overlay.remove();
+  };
+  document.body.appendChild(overlay);
+}
+
+async function deleteNvidiaKey(keyId) {
+  if (!confirm('Delete NVIDIA key ' + keyId + '?')) return;
+  var r = await doApiCallWithToast('/admin/api/nvidia/keys/' + keyId, 'DELETE');
+  if (r) { loadAccounts(); loadNvidiaKeys(); }
+}
+
 </script>
 </body>
 </html>

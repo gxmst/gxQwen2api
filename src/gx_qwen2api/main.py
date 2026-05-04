@@ -16,9 +16,11 @@ from fastapi import FastAPI, Header, HTTPException
 from .account_pool import AccountPool
 from .auth import AuthManager
 from .auto_refresher import AutoRefresher
+from .call_logger import call_logger
 from .config import settings
 from .event_logger import event_logger
 from .providers import DeepseekProvider, FreebuffProvider
+from .providers.nvidia import NvidiaProvider
 from .routes import chat, health, models as models_router
 
 # ── Basic logging setup ──────────────────────────────────────────
@@ -58,6 +60,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _app.state.deepseek = DeepseekProvider(pool, _app.state.http_client)
     await _app.state.deepseek.start()
 
+    _app.state.nvidia = NvidiaProvider(_app.state.http_client)
+    await _app.state.nvidia.start()
+    _app.state.call_logger = call_logger
+
     # Start auto-refresher background task
     auto_refresher = AutoRefresher(pool, _app.state.auth, _app.state.http_client)
     _app.state.auto_refresher = auto_refresher
@@ -96,12 +102,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await _app.state.auto_refresher.stop()
     await _app.state.freebuff.stop()
     await _app.state.deepseek.stop()
+    await _app.state.nvidia.stop()
 
     event_logger.shutdown("Server stopping")
     await _app.state.http_client.aclose()
 
 
-app = FastAPI(title="gxQwen2api", lifespan=lifespan)
+app = FastAPI(title="gx2api", lifespan=lifespan)
 
 app.include_router(chat.router)
 app.include_router(models_router.router)

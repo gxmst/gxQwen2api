@@ -1,6 +1,6 @@
-# gxQwen2api
+# gx2api
 
-一个带管理面板的 OpenAI 兼容代理壳子。项目最初面向 Qwen OAuth，多账号池、凭证热重载、健康状态机和后台面板都已做完；当前接入了 DeepSeek Web 和 Freebuff / Codebuff 渠道。
+多 Provider OpenAI-compatible API gateway。接入 Qwen OAuth、DeepSeek Web、Freebuff / Codebuff 等渠道，具备多 key 轮询、限流退避、健康状态机和后台管理面板。
 
 > [!IMPORTANT]
 > `Qwen OAuth` 免费额度已停用，Qwen 渠道目前仅保留为兼容旧凭证与实验用途，不再建议作为主链路依赖。
@@ -307,7 +307,7 @@ uv run python -m gx_qwen2api.main
 ```yaml
 # docker-compose.yml
 services:
-  gx-qwen-api:
+  gx2api:
     volumes:
       - ~/.qwen:/app/data/creds
 ```

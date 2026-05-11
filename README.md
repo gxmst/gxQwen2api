@@ -222,7 +222,9 @@ uv run python -m gx_qwen2api.main
 | `PORT` | `31998` | 服务端口 |
 | `ADDRESS` | `0.0.0.0` | 绑定地址 |
 | `LOG_LEVEL` | `info` | `info` 或 `debug` |
-| `LOG_REQUESTS` | `true` | 记录代理请求到 stderr + 仪表盘 |
+| `LOG_REQUESTS` | `false` | 是否把每次代理请求/响应写入 stderr；仪表盘仍保留最近事件 |
+| `DOCKER_LOG_MAX_SIZE` | `10m` | Docker json 日志单文件上限 |
+| `DOCKER_LOG_MAX_FILE` | `3` | Docker json 日志保留文件数 |
 | `MAX_RETRIES` | `5` | 最大重试次数 |
 | `RETRY_DELAY_MS` | `1000` | 基础重试延迟（毫秒） |
 | `QWEN_CODE_AUTH_USE` | `true` | 启用千问 OAuth |

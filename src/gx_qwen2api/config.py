@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "info"
-    log_requests: bool = True
+    log_requests: bool = False
 
     # Web admin — set to empty string to disable
     admin_enabled: bool = True

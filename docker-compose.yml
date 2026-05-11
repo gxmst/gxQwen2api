@@ -24,7 +24,7 @@ services:
       - QWEN_CODE_AUTH_USE=${QWEN_CODE_AUTH_USE:-true}
       - API_KEY=${API_KEY:-}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-coder-model}
-      - LOG_REQUESTS=${LOG_REQUESTS:-true}
+      - LOG_REQUESTS=${LOG_REQUESTS:-false}
       - CREDS_DIR=/app/data/creds
       - ADMIN_ENABLED=${ADMIN_ENABLED:-true}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
@@ -34,6 +34,11 @@ services:
       - AUTO_REFRESH_THRESHOLD_MINUTES=${AUTO_REFRESH_THRESHOLD_MINUTES:-30}
 
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "${DOCKER_LOG_MAX_SIZE:-10m}"
+        max-file: "${DOCKER_LOG_MAX_FILE:-3}"
 
 volumes:
   qwen_creds:

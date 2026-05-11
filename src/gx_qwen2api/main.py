@@ -148,4 +148,10 @@ def validate_api_key(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=settings.address, port=settings.port)
+    uvicorn.run(
+        app,
+        host=settings.address,
+        port=settings.port,
+        log_level=settings.log_level.lower(),
+        access_log=settings.log_requests,
+    )

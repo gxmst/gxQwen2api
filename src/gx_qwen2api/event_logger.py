@@ -9,6 +9,8 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
+from .config import settings
+
 logger = logging.getLogger("gx_qwen2api")
 
 
@@ -20,7 +22,14 @@ class EventLogger:
     def __init__(self) -> None:
         self._ring: deque[dict[str, Any]] = deque(maxlen=self.MAX_ENTRIES)
 
-    def _emit(self, level: int, event: str, data: dict[str, Any]) -> None:
+    def _emit(
+        self,
+        level: int,
+        event: str,
+        data: dict[str, Any],
+        *,
+        log_to_stderr: bool = True,
+    ) -> None:
         record = {
             "ts": datetime.now(timezone.utc)
             .isoformat()
@@ -29,7 +38,8 @@ class EventLogger:
             **data,
         }
         self._ring.append(record)
-        logger.log(level, f"[{event}] {data.get('account_id', '-')} {data.get('detail', '') or data.get('reason', '')}")
+        if log_to_stderr:
+            logger.log(level, f"[{event}] {data.get('account_id', '-')} {data.get('detail', '') or data.get('reason', '')}")
 
     # ── Ring buffer access ────────────────────────────────────────
 
@@ -59,6 +69,7 @@ class EventLogger:
                 "is_streaming": is_streaming,
                 "detail": f"→ {model} ({'stream' if is_streaming else 'regular'}) {token_count}tok",
             },
+            log_to_stderr=settings.log_requests,
         )
 
     def proxy_response(
@@ -86,6 +97,7 @@ class EventLogger:
                 "qwen_id": qwen_id,
                 "detail": f"← {status_code} {latency_ms}ms{tok_part}",
             },
+            log_to_stderr=settings.log_requests,
         )
 
     def proxy_error(

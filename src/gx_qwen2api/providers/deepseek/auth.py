@@ -97,8 +97,8 @@ async def login(
     """
     payload: dict[str, Any] = {
         "password": password,
-        "device_id": "",
-        "os": "web",
+        "device_id": "deepseek_to_api",
+        "os": "android",
     }
     if email:
         payload["email"] = email
@@ -201,7 +201,7 @@ async def create_chat_session(client: httpx.AsyncClient, token: str) -> str | No
         "POST",
         "/chat_session/create",
         token=token,
-        json_data={},
+        json_data={"agent": "chat"},
     )
     if resp.status_code != 200:
         logger.warning("DeepSeek create session failed: %s %s", resp.status_code, resp.text[:200])

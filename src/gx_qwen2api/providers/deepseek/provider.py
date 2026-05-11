@@ -724,6 +724,7 @@ class DeepseekProvider:
                 if not ok:
                     acct_state.mark_auth_error("DeepSeek token refresh/re-login failed")
                     continue
+                acct_state.clear_auth_error()
                 acct_state.access_token = runtime.account.access_token
 
                 session_id = await create_chat_session(self.client, runtime.account.access_token)

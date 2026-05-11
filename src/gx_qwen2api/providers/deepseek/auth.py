@@ -9,6 +9,7 @@ Aligned with ds-free-api protocol:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -23,24 +24,27 @@ logger = logging.getLogger("gx_qwen2api.deepseek.auth")
 
 API_BASE = "https://chat.deepseek.com/api/v0"
 DEVICE_ID = "deepseek-web-client"
-CLIENT_VERSION = "1.8.0"
-CLIENT_PLATFORM = "web"
+CLIENT_VERSION = "2.0.4"
+CLIENT_PLATFORM = "android"
+CLIENT_LOCALE = "zh_CN"
+CLIENT_ANDROID_API_LEVEL = "35"
+CLIENT_NAME = "DeepSeek"
+CLIENT_USER_AGENT = f"{CLIENT_NAME}/{CLIENT_VERSION} Android/{CLIENT_ANDROID_API_LEVEL}"
 
 
 def _build_headers(token: str | None = None, extra: dict[str, str] | None = None) -> dict[str, str]:
     headers: dict[str, str] = {
+        "Host": "chat.deepseek.com",
         "Accept": "application/json",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "accept-charset": "UTF-8",
         "Content-Type": "application/json",
         "Origin": "https://chat.deepseek.com",
         "Referer": "https://chat.deepseek.com/",
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/134.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": CLIENT_USER_AGENT,
         "X-Client-Version": CLIENT_VERSION,
         "X-Client-Platform": CLIENT_PLATFORM,
+        "X-Client-Locale": CLIENT_LOCALE,
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -111,9 +115,33 @@ async def login(
         logger.warning("DeepSeek login requires email or mobile")
         return None
 
-    login_resp = await _request(client, "POST", "/users/login", json_data=payload)
-    if login_resp.status_code != 200:
-        logger.warning("DeepSeek login failed: %s %s", login_resp.status_code, login_resp.text[:200])
+    for attempt in range(1, 4):
+        login_resp = await _request(client, "POST", "/users/login", json_data=payload)
+        if login_resp.status_code == 200:
+            break
+
+        body_preview = login_resp.text[:200]
+        safe_headers = {
+            key: login_resp.headers.get(key, "")
+            for key in ("content-type", "location", "retry-after", "x-request-id")
+            if login_resp.headers.get(key)
+        }
+        if login_resp.status_code == 202 and attempt < 3:
+            logger.warning(
+                "DeepSeek login pending (202) attempt=%s headers=%s body=%r",
+                attempt,
+                safe_headers,
+                body_preview,
+            )
+            await asyncio.sleep(1.5 * attempt)
+            continue
+
+        logger.warning(
+            "DeepSeek login failed: %s headers=%s body=%r",
+            login_resp.status_code,
+            safe_headers,
+            body_preview,
+        )
         return None
 
     try:

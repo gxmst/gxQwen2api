@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 import datetime
 from dataclasses import dataclass, field
 from enum import Enum
@@ -52,6 +53,7 @@ class AccountState:
     password: str = ""
     mobile: str = ""
     area_code: str = ""
+    device_id: str = ""
     # Health
     error_count: int = 0
     cooldown_until: float = 0.0
@@ -290,6 +292,7 @@ class AccountState:
             "rate_limit_count": self.rate_limit_count,
             "last_rate_limit_at": self.last_rate_limit_at or None,
             "last_success_at": self.last_success_at or None,
+            "device_id": self.device_id or None,
         }
 
     def record_error(self, message: str, cooldown_s: int = 60) -> None:
@@ -338,7 +341,6 @@ class AccountPool:
                     state.rate_limit_count = existing.rate_limit_count
                     state.last_rate_limit_at = existing.last_rate_limit_at
                     state.last_error = existing.last_error
-                    state.last_auth_error = existing.last_auth_error
                     state.last_refresh_success = existing.last_refresh_success
                     state.last_auth_check_at = existing.last_auth_check_at
                     state.last_auth_success_at = existing.last_auth_success_at
@@ -429,6 +431,15 @@ class AccountPool:
             area_code = raw.get("area_code", "")
             access_token = raw.get("access_token", "")
             refresh_token_hash = hashlib.sha256(password.encode()).hexdigest()[:8]
+            # Per-account device_id: load existing or generate a new one
+            device_id_val = raw.get("device_id", "")
+            if not device_id_val:
+                device_id_val = uuid.uuid4().hex
+                raw["device_id"] = device_id_val
+                try:
+                    path.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+                except OSError:
+                    pass
         else:
             # Validate qwen-like credentials
             if not raw.get("refresh_token") and not raw.get("access_token"):
@@ -451,6 +462,7 @@ class AccountPool:
             password=password,
             mobile=mobile,
             area_code=area_code,
+            device_id=raw.get("device_id", ""),
             _raw_creds=raw,
         )
 
@@ -487,12 +499,8 @@ class AccountPool:
             new_state.last_error = acct.last_error
             new_state.enabled = acct.enabled
             new_state.provider = acct.provider
-            # Preserve auth state across reloads
-            new_state.last_auth_error = acct.last_auth_error
+            # Preserve auth state across reloads (but NOT last_auth_error to allow recovery)
             new_state.last_refresh_success = acct.last_refresh_success
-            new_state.health_status = acct.health_status
-            new_state.status_reason = acct.status_reason
-            new_state.status_reason_params = acct.status_reason_params
             new_state.last_auth_check_at = acct.last_auth_check_at
             new_state.last_auth_success_at = acct.last_auth_success_at
             new_state.last_auth_failure_at = acct.last_auth_failure_at

@@ -94,14 +94,19 @@ async def login(
     password: str = "",
     mobile: str = "",
     area_code: str = "",
+    device_id: str = "",
 ) -> dict[str, Any] | None:
     """Login with email/password or mobile+area_code/password to /users/login.
 
     Returns {"token": str, "user_id": str, "email": str|None, "mobile": str|None} or None.
     """
+    if not device_id:
+        import uuid as _uuid
+        device_id = _uuid.uuid4().hex
+
     payload: dict[str, Any] = {
         "password": password,
-        "device_id": "deepseek_to_api",
+        "device_id": device_id,
         "os": "android",
     }
     if email:
@@ -198,7 +203,7 @@ async def refresh_token_if_needed(
 
     # Fallback: re-login with credentials
     if account.email and account.password:
-        result = await login(client, email=account.email, password=account.password)
+        result = await login(client, email=account.email, password=account.password, device_id=account.device_id)
         if result:
             account.access_token = result["token"]
             account.last_login_at = time.time()
@@ -207,7 +212,7 @@ async def refresh_token_if_needed(
             return True
 
     if account.mobile and account.password:
-        result = await login(client, mobile=account.mobile, password=account.password, area_code=account.area_code)
+        result = await login(client, mobile=account.mobile, password=account.password, area_code=account.area_code, device_id=account.device_id)
         if result:
             account.access_token = result["token"]
             account.last_login_at = time.time()

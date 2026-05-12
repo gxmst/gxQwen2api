@@ -762,6 +762,7 @@ class DeepseekProvider:
                 refresh_token=acct_state._raw_creds.get("refresh_token", "") if isinstance(acct_state._raw_creds, dict) else "",
                 mobile=acct_state._raw_creds.get("mobile", "") if isinstance(acct_state._raw_creds, dict) else "",
                 area_code=acct_state._raw_creds.get("area_code", "") if isinstance(acct_state._raw_creds, dict) else "",
+                device_id=acct_state.device_id or (acct_state._raw_creds.get("device_id", "") if isinstance(acct_state._raw_creds, dict) else ""),
             )
             self._runtimes[account_id] = _AccountRuntime(account=ds_account)
         return self._runtimes[account_id]

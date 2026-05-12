@@ -593,6 +593,7 @@ async def api_deepseek_login(
         password=runtime.account.password,
         mobile=runtime.account.mobile,
         area_code=runtime.account.area_code,
+        device_id=runtime.account.device_id,
     )
     if result:
         runtime.account.access_token = result["token"]

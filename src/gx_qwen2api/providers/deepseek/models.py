@@ -54,6 +54,9 @@ class DeepseekAccount:
     access_token: str = ""
     refresh_token: str = ""
 
+    # Device fingerprint
+    device_id: str = ""
+
     # Metadata
     created_at: float = field(default_factory=lambda: __import__("time").time())
     last_login_at: float | None = None
@@ -69,6 +72,7 @@ class DeepseekAccount:
             "enabled": self.enabled,
             "access_token": self.access_token,
             "refresh_token": self.refresh_token,
+            "device_id": self.device_id,
             "created_at": self.created_at,
             "last_login_at": self.last_login_at,
             "last_error": self.last_error,
@@ -85,6 +89,7 @@ class DeepseekAccount:
             enabled=data.get("enabled", True),
             access_token=data.get("access_token", ""),
             refresh_token=data.get("refresh_token", ""),
+            device_id=data.get("device_id", ""),
             created_at=data.get("created_at", 0.0) or __import__("time").time(),
             last_login_at=data.get("last_login_at"),
             last_error=data.get("last_error"),

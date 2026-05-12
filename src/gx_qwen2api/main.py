@@ -49,7 +49,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _app.state.auth = AuthManager(pool)
     _app.state.http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(300, connect=10),
-        headers={"User-Agent": "QwenCode/0.14.0 (linux; x64)"},
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"},
     )
     _app.state.request_count = 0
     _app.state.session_id = str(uuid.uuid4())

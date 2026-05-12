@@ -885,16 +885,16 @@ class DeepseekProvider:
 
         def _process_frames(frames: list[DsFrame]) -> list[bytes]:
             chunks: list[bytes] = []
-            content_frames = [f for f in frames if f.kind not in ("role", "finish", "usage")]
-            if not content_frames:
+            filtered_frames = [f for f in frames if f.kind != "role"]
+            if not filtered_frames:
                 return chunks
             if sieve is not None:
-                for chunk_dict in self._process_stream_frames_with_sieve(content_frames, model, request_id, sieve):
+                for chunk_dict in self._process_stream_frames_with_sieve(filtered_frames, model, request_id, sieve):
                     if _chunk_has_tool_calls(chunk_dict):
                         tool_calls_emitted[0] = True
                     chunks.append(_yield_openai_chunk(chunk_dict))
             else:
-                for chunk_dict in ds_frames_to_openai_chunks(content_frames, model, request_id):
+                for chunk_dict in ds_frames_to_openai_chunks(filtered_frames, model, request_id):
                     chunks.append(_yield_openai_chunk(chunk_dict))
             return chunks
 
@@ -1023,27 +1023,32 @@ class DeepseekProvider:
         finally:
             await resp.aclose()
 
-        if text_buf.strip():
-            sse_events = parse_sse_events(text_buf)
-            for sse_evt in sse_events:
-                state.apply_event(sse_evt.event, sse_evt.data)
-
         content = ""
         reasoning = ""
         usage_tokens = 0
-        for frag in state.fragments:
-            if frag.ty == _FRAG_RESPONSE and frag.content:
-                content += frag.content
-            elif frag.ty == _FRAG_THINK and frag.content:
-                reasoning += frag.content
+
+        if text_buf.strip():
+            sse_events = parse_sse_events(text_buf)
+            for sse_evt in sse_events:
+                frames = state.apply_event(sse_evt.event, sse_evt.data)
+                for f in frames:
+                    if f.kind == "content_delta":
+                        content += str(f.value)
+                    elif f.kind == "think_delta":
+                        reasoning += str(f.value)
+                    elif f.kind == "usage":
+                        usage_tokens = int(f.value)
 
         if state.accumulated_token_usage is not None:
             usage_tokens = state.accumulated_token_usage
 
         if not content and not reasoning and text_buf.strip():
-            content, reasoning = _extract_deepseek_text_fallback(text_buf)
+            content_fb, reasoning_fb = _extract_deepseek_text_fallback(text_buf)
+            if content_fb or reasoning_fb:
+                content = content_fb
+                reasoning = reasoning_fb
             logger.warning(
-                "DeepSeek non-stream response parsed empty; fallback content_len=%d reasoning_len=%d raw_sample=%r",
+                "DeepSeek non-stream response used fallback content_len=%d reasoning_len=%d raw_sample=%r",
                 len(content),
                 len(reasoning),
                 text_buf[:2000],

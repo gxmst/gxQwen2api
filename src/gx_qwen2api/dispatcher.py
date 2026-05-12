@@ -221,12 +221,11 @@ class Dispatcher:
         
         # EXTENSION POINT: Binding per-account proxies would happen here by modifying 'client' or transport
         
-        return await client.post(
-            f"{endpoint}/chat/completions",
-            json=payload,
-            headers=headers,
+        req = client.build_request("POST", f"{endpoint}/chat/completions", json=payload, headers=headers)
+        return await client.send(
+            req,
+            stream=request.stream,
             timeout=httpx.Timeout(60.0, connect=10.0),
-            stream=True,
         )
 
     def _create_streaming_response(self, resp: httpx.Response, account_id: str, request_id: str) -> StreamingResponse:

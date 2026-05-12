@@ -555,7 +555,7 @@ class DeepseekProvider:
                 ),
             )
 
-        thinking_enabled = request.enable_thinking if request.enable_thinking is not None else False
+        thinking_enabled = request.enable_thinking if request.enable_thinking is not None else (ds_type == "expert")
         search_enabled = False
 
         tools = request.tools

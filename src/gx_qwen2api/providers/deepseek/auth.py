@@ -325,6 +325,7 @@ async def edit_message(
         token=token,
         json_data=payload,
         extra_headers={"X-Ds-Pow-Response": pow_header},
+        timeout=300.0,
     )
 
 
@@ -342,6 +343,7 @@ async def completion(
         token=token,
         json_data=payload,
         extra_headers={"X-Ds-Pow-Response": pow_header},
+        timeout=300.0,
     )
 
 

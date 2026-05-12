@@ -61,6 +61,7 @@ async def _request(
     json_data: dict[str, Any] | None = None,
     extra_headers: dict[str, str] | None = None,
     timeout: float = 30.0,
+    stream: bool = False,
 ) -> httpx.Response:
     url = f"{API_BASE.rstrip('/')}{path}"
     headers = _build_headers(token, extra_headers)
@@ -71,6 +72,7 @@ async def _request(
         json=json_data,
         timeout=timeout,
         follow_redirects=True,
+        stream=stream,
     )
 
 
@@ -326,6 +328,7 @@ async def edit_message(
         json_data=payload,
         extra_headers={"X-Ds-Pow-Response": pow_header},
         timeout=300.0,
+        stream=True,
     )
 
 
@@ -344,6 +347,7 @@ async def completion(
         json_data=payload,
         extra_headers={"X-Ds-Pow-Response": pow_header},
         timeout=300.0,
+        stream=True,
     )
 
 

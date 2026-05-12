@@ -226,6 +226,7 @@ class Dispatcher:
             json=payload,
             headers=headers,
             timeout=httpx.Timeout(60.0, connect=10.0),
+            stream=True,
         )
 
     def _create_streaming_response(self, resp: httpx.Response, account_id: str, request_id: str) -> StreamingResponse:

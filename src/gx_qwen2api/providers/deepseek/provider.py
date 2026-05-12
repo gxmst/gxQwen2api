@@ -876,8 +876,8 @@ class DeepseekProvider:
             nonlocal text_buf, stop_id, ready_parsed, pre_ready_frames, finish_reason, tool_calls_emitted
 
             try:
-                async for chunk in resp.aiter_bytes():
-                    text_buf += chunk.decode("utf-8", errors="replace")
+                async for chunk in resp.aiter_text():
+                    text_buf += chunk
 
                     while "\n\n" in text_buf:
                         event_end = text_buf.index("\n\n")
@@ -1024,8 +1024,8 @@ class DeepseekProvider:
         text_buf = ""
 
         try:
-            async for chunk in resp.aiter_bytes():
-                text_buf += chunk.decode("utf-8", errors="replace")
+            async for chunk in resp.aiter_text():
+                text_buf += chunk
         finally:
             await resp.aclose()
 

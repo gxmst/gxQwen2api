@@ -65,8 +65,8 @@ async def _request(
 ) -> httpx.Response:
     url = f"{API_BASE.rstrip('/')}{path}"
     headers = _build_headers(token, extra_headers)
-    req = client.build_request(method, url, headers=headers, json=json_data)
-    return await client.send(req, stream=stream, timeout=timeout, follow_redirects=True)
+    req = client.build_request(method, url, headers=headers, json=json_data, timeout=timeout)
+    return await client.send(req, stream=stream, follow_redirects=True)
 
 
 def _parse_envelope(resp_json: dict[str, Any]) -> Any | None:

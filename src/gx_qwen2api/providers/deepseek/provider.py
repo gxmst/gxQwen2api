@@ -180,6 +180,14 @@ class DsPatchState:
                 self.accumulated_token_usage = u
                 frames.append(DsFrame("usage", u))
 
+        elif path in ("response/thinking_content", "thinking_content"):
+            if isinstance(val, str) and val:
+                frames.append(DsFrame("think_delta", val))
+
+        elif path in ("response/content", "content"):
+            if isinstance(val, str) and val:
+                frames.append(DsFrame("content_delta", val))
+
         elif path == "response/fragments/-1/content":
             if isinstance(val, str) and self.fragments:
                 frag = self.fragments[-1]
@@ -864,126 +872,112 @@ class DeepseekProvider:
         tool_names: list[str] | None = None,
     ) -> StreamingResponse:
         state = DsPatchState()
-        text_buf = ""
         stop_id = 0
-        ready_parsed = False
-        pre_ready_frames: list[DsFrame] = []
         sieve = ToolCallStreamSieve(tool_names) if tools else None
         finish_reason = "stop"
-        tool_calls_emitted = False
+        tool_calls_emitted = [False]
+        first_chunk_sent = [False]
+        current_event_type: str | None = None
+        data_lines: list[str] = []
+
+        def _yield_openai_chunk(chunk_dict: dict[str, Any]) -> bytes:
+            return f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n".encode("utf-8")
+
+        def _process_frames(frames: list[DsFrame]) -> list[bytes]:
+            chunks: list[bytes] = []
+            content_frames = [f for f in frames if f.kind not in ("role", "finish", "usage")]
+            if not content_frames:
+                return chunks
+            if sieve is not None:
+                for chunk_dict in self._process_stream_frames_with_sieve(content_frames, model, request_id, sieve):
+                    if _chunk_has_tool_calls(chunk_dict):
+                        tool_calls_emitted[0] = True
+                    chunks.append(_yield_openai_chunk(chunk_dict))
+            else:
+                for chunk_dict in ds_frames_to_openai_chunks(content_frames, model, request_id):
+                    chunks.append(_yield_openai_chunk(chunk_dict))
+            return chunks
+
+        def _dispatch_data(data_str: str) -> list[bytes] | None:
+            nonlocal current_event_type, stop_id
+
+            evt = current_event_type
+            current_event_type = None
+            data_lines.clear()
+
+            if evt == "ready":
+                try:
+                    rd = json.loads(data_str)
+                    stop_id = rd.get("response_message_id", 0)
+                except Exception:
+                    pass
+
+            frames = state.apply_event(evt, data_str)
+
+            for f in frames:
+                if f.kind == "status" and "rate_limit" in str(f.value):
+                    return None
+
+            output: list[bytes] = []
+            if not first_chunk_sent[0]:
+                first_chunk_sent[0] = True
+                output.append(_yield_openai_chunk(_make_openai_chunk(model, request_id, role="assistant")))
+
+            output.extend(_process_frames(frames))
+            return output
 
         async def generate() -> AsyncGenerator[bytes, None]:
-            nonlocal text_buf, stop_id, ready_parsed, pre_ready_frames, finish_reason, tool_calls_emitted
+            nonlocal stop_id, finish_reason, current_event_type
 
             try:
-                async for chunk in resp.aiter_text():
-                    text_buf += chunk
+                async for line in resp.aiter_lines():
+                    if line.startswith("event:"):
+                        current_event_type = line[6:].strip()
+                    elif line.startswith("data:"):
+                        d = line[5:]
+                        if d.startswith(" "):
+                            d = d[1:]
+                        data_lines.append(d)
+                    elif line == "":
+                        if data_lines:
+                            data = "\n".join(data_lines)
+                            result = _dispatch_data(data)
+                            if result is None:
+                                err_json = json.dumps({
+                                    "error": {
+                                        "message": "DeepSeek rate limit",
+                                        "type": "rate_limit_error",
+                                    }
+                                })
+                                yield f"data: {err_json}\n\n".encode("utf-8")
+                                yield b"data: [DONE]\n\n"
+                                return
+                            for chunk in result:
+                                yield chunk
 
-                    while "\n\n" in text_buf:
-                        event_end = text_buf.index("\n\n")
-                        block = text_buf[:event_end]
-                        text_buf = text_buf[event_end + 2:]
-
-                        sse_events = parse_sse_events(block)
-                        for sse_evt in sse_events:
-                            frames = state.apply_event(sse_evt.event, sse_evt.data)
-
-                            if not ready_parsed:
-                                found_role = False
-                                for f in frames:
-                                    if f.kind == "role":
-                                        ready_parsed = True
-                                        found_role = True
-                                    elif f.kind == "status" and "rate_limit" in str(f.value):
-                                        err_json = json.dumps({
-                                            "error": {
-                                                "message": "DeepSeek rate limit",
-                                                "type": "rate_limit_error",
-                                            }
-                                        })
-                                        yield f"data: {err_json}\n\n".encode("utf-8")
-                                        yield b"data: [DONE]\n\n"
-                                        return
-                                    elif f.kind not in ("role",):
-                                        pre_ready_frames.append(f)
-
-                                if sse_evt.event == "ready":
-                                    try:
-                                        ready_data = json.loads(sse_evt.data)
-                                        stop_id = ready_data.get("response_message_id", 0)
-                                    except Exception:
-                                        pass
-
-                                if found_role:
-                                    openai_chunks = ds_frames_to_openai_chunks(
-                                        [f for f in frames if f.kind == "role"], model, request_id,
-                                    )
-                                    for chunk_dict in openai_chunks:
-                                        line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
-                                        yield line.encode("utf-8")
-
-                                    if pre_ready_frames:
-                                        if sieve is not None:
-                                            for chunk_dict in self._process_stream_frames_with_sieve(pre_ready_frames, model, request_id, sieve):
-                                                if _chunk_has_tool_calls(chunk_dict):
-                                                    tool_calls_emitted = True
-                                                line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
-                                                yield line.encode("utf-8")
-                                        else:
-                                            openai_chunks = ds_frames_to_openai_chunks(pre_ready_frames, model, request_id)
-                                            for chunk_dict in openai_chunks:
-                                                line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
-                                                yield line.encode("utf-8")
-                                        pre_ready_frames = []
-
-                                continue
-
-                            if sieve is not None:
-                                for chunk_dict in self._process_stream_frames_with_sieve(frames, model, request_id, sieve):
-                                    if _chunk_has_tool_calls(chunk_dict):
-                                        tool_calls_emitted = True
-                                    line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
-                                    yield line.encode("utf-8")
-                            else:
-                                openai_chunks = ds_frames_to_openai_chunks(frames, model, request_id)
-                                for chunk_dict in openai_chunks:
-                                    line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
-                                    yield line.encode("utf-8")
-
-                if text_buf.strip():
-                    sse_events = parse_sse_events(text_buf)
-                    for sse_evt in sse_events:
-                        frames = state.apply_event(sse_evt.event, sse_evt.data)
-                        if sieve is not None:
-                            for chunk_dict in self._process_stream_frames_with_sieve(frames, model, request_id, sieve):
-                                if _chunk_has_tool_calls(chunk_dict):
-                                    tool_calls_emitted = True
-                                line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
-                                yield line.encode("utf-8")
-                        else:
-                            openai_chunks = ds_frames_to_openai_chunks(frames, model, request_id)
-                            for chunk_dict in openai_chunks:
-                                line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
-                                yield line.encode("utf-8")
+                if data_lines:
+                    data = "\n".join(data_lines)
+                    result = _dispatch_data(data)
+                    if result is not None:
+                        for chunk in result:
+                            yield chunk
 
                 if sieve is not None:
                     flush_result = sieve.flush()
                     if flush_result.tool_call_chunks:
-                        tool_calls_emitted = True
+                        tool_calls_emitted[0] = True
                         for delta in flush_result.tool_call_chunks:
                             chunk = _make_openai_chunk(model, request_id, tool_call_delta=delta)
-                            line = f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            yield line.encode("utf-8")
+                            yield _yield_openai_chunk(chunk)
                     if flush_result.content:
                         chunk = _make_openai_chunk(model, request_id, content=flush_result.content)
-                        line = f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                        yield line.encode("utf-8")
+                        yield _yield_openai_chunk(chunk)
 
-                    if tool_calls_emitted:
+                    if tool_calls_emitted[0]:
                         finish_reason = "tool_calls"
 
                     final_chunk = _make_openai_chunk(model, request_id, finish_reason=finish_reason)
-                    yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n".encode("utf-8")
+                    yield _yield_openai_chunk(final_chunk)
 
                 yield b"data: [DONE]\n\n"
 

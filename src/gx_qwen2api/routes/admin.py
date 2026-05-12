@@ -461,8 +461,8 @@ async def api_deepseek_add(
         raise HTTPException(status_code=400, detail="area_code is required when using mobile login")
     if not account_id:
         account_id = email.split("@")[0] if email else mobile
-    if not re.match(r"^[A-Za-z0-9_-]+$", account_id):
-        raise HTTPException(status_code=400, detail="account_id must be alphanumeric with dashes/underscores")
+    if not re.match(r"^[A-Za-z0-9_\-\.\+@]+$", account_id):
+        raise HTTPException(status_code=400, detail="account_id contains invalid characters")
 
     settings.creds_dir.mkdir(parents=True, exist_ok=True)
     target = settings.creds_dir / f"{account_id}.json"
